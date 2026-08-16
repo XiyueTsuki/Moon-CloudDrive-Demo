@@ -1,0 +1,24 @@
+version: '3.3'
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: mysql-8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: 123
+    ports:
+      - "4000:3306"
+    volumes:
+      - /XiyueTsuki-Moon/MySQL-8.4/data:/var/lib/mysql
+      - /XiyueTsuki-Moon/MySQL-8.4/conf:/etc/mysql/conf.d
+
+  redis:
+    image: redis:8.2
+    container_name: redis-8.2
+    restart: unless-stopped
+    ports:
+      - "4001:6379"
+    volumes:
+      - /XiyueTsuki-Moon/Redis-8.2/data:/data
+      - /XiyueTsuki-Moon/Redis-8.2/conf:/usr/local/etc/redis
