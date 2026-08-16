@@ -1,0 +1,5 @@
+$kind: http-request
+name: 新请求
+url: ""
+method: GET
+order: 1786872839542
