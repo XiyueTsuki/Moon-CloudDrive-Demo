@@ -22,6 +22,8 @@ public class File {
 
     private String contentType;
 
+    private String fileHash;
+
     private String ossUrl;
 
     private LocalDateTime uploadTime;
