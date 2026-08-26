@@ -23,19 +23,19 @@ public class Response<T> {
         this.msg = msg;
     }
 
-    public static Response<Void> ok(String msg) {
+    public static <T> Response<T> ok(String msg) {
         return new Response<>(200, msg);
     }
 
     public static <T> Response<T> ok(T data, String msg) {
-        return new Response<T>(200, data, msg);
+        return new Response<>(200, data, msg);
     }
 
     public static <T> Response<T> bad(int code, T data, String msg) {
-        return new Response<T>(code, data, msg);
+        return new Response<>(code, data, msg);
     }
 
-    public static Response<Void> bad(int code, String msg) {
+    public static <T> Response<T> bad(int code, String msg) {
         return new Response<>(code, msg);
     }
 }

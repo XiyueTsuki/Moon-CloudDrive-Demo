@@ -1,13 +1,16 @@
 $kind: http-request
+name: 文件上传
 url: http://localhost:8080/api/file/upload
 method: POST
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
 body:
   type: formdata
   content:
     - type: file
       key: file
       src:
-        - /E:/学校/2024秋_Java程序设计_实验指导书.pdf
+        - /E:/学校/阿里巴巴《Java开发手册》.pdf
       description: ""
       disabled: false
 order: 1787652751451

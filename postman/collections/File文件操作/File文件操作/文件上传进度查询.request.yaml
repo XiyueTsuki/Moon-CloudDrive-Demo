@@ -1,0 +1,6 @@
+$kind: http-request
+url: http://localhost:8080/api/file/progress?taskId=6b739d8a98f04c8a9e70d774e2cc23b8
+method: GET
+queryParams:
+  taskId: 6b739d8a98f04c8a9e70d774e2cc23b8
+order: 2196185596960870
