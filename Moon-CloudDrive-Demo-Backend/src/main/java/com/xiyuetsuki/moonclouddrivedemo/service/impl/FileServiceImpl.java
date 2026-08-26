@@ -1,5 +1,6 @@
 package com.xiyuetsuki.moonclouddrivedemo.service.impl;
 
+import cn.dev33.satoken.stp.StpUtil;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.FileMapper;
 import com.xiyuetsuki.moonclouddrivedemo.service.FileService;
@@ -25,16 +26,12 @@ public class FileServiceImpl implements FileService {
     private final OssUtil ossUtil;
     private final FileMapper fileMapper;
 
-    /**
-     * 文件上传
-     * @param file
-     */
     @Override
     public void uploadFile(MultipartFile file) {
         String originalFilename = file.getOriginalFilename();
+        long userId = StpUtil.getLoginIdAsLong();
 
         try {
-            //去重秒传
             byte[] fileBytes = file.getBytes();
             String fileHash = computeSha256(fileBytes);
 
@@ -46,6 +43,7 @@ public class FileServiceImpl implements FileService {
                 fileRecord.setFileSize(file.getSize());
                 fileRecord.setContentType(file.getContentType());
                 fileRecord.setFileHash(fileHash);
+                fileRecord.setUserId(userId);
                 fileRecord.setOssUrl(existingFile.getOssUrl());
                 fileRecord.setUploadTime(LocalDateTime.now());
 
@@ -55,7 +53,6 @@ public class FileServiceImpl implements FileService {
                 return;
             }
 
-            //正常上传
             try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
                 String storedFilename = ossUtil.upload(inputStream, originalFilename);
                 String ossUrl = ossUtil.getOssUrl(storedFilename);
@@ -66,6 +63,7 @@ public class FileServiceImpl implements FileService {
                 fileRecord.setFileSize(file.getSize());
                 fileRecord.setContentType(file.getContentType());
                 fileRecord.setFileHash(fileHash);
+                fileRecord.setUserId(userId);
                 fileRecord.setOssUrl(ossUrl);
                 fileRecord.setUploadTime(LocalDateTime.now());
 

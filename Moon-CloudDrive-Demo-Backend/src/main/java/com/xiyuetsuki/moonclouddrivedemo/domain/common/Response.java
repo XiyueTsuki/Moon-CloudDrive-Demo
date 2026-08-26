@@ -31,7 +31,11 @@ public class Response<T> {
         return new Response<T>(200, data, msg);
     }
 
-    public static Response<Void> bad(int code,String msg){
-        return new Response<>(code,msg);
+    public static <T> Response<T> bad(int code, T data, String msg) {
+        return new Response<T>(code, data, msg);
+    }
+
+    public static Response<Void> bad(int code, String msg) {
+        return new Response<>(code, msg);
     }
 }

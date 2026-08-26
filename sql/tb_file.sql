@@ -5,7 +5,9 @@ CREATE TABLE IF NOT EXISTS tb_file (
     file_size BIGINT NOT NULL COMMENT '文件大小(字节)',
     content_type VARCHAR(128) COMMENT '文件MIME类型',
     file_hash VARCHAR(64) NOT NULL COMMENT 'SHA-256哈希值',
+    user_id BIGINT NOT NULL COMMENT '上传用户ID',
     oss_url VARCHAR(1024) NOT NULL COMMENT 'OSS访问URL',
     upload_time DATETIME NOT NULL COMMENT '上传时间',
-    INDEX idx_file_hash (file_hash)
+    INDEX idx_file_hash (file_hash),
+    INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文件上传记录表';

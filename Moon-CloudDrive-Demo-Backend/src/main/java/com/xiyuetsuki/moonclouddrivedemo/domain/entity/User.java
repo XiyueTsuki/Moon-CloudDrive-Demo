@@ -8,25 +8,17 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("tb_file")
-public class File {
+@TableName("tb_user")
+public class User {
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private String originalFilename;
+    private String username;
 
-    private String storedFilename;
+    private String password;
 
-    private Long fileSize;
+    private String email;
 
-    private String contentType;
-
-    private String fileHash;
-
-    private Long userId;
-
-    private String ossUrl;
-
-    private LocalDateTime uploadTime;
+    private LocalDateTime createTime;
 }
