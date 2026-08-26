@@ -1,0 +1,18 @@
+$kind: http-request
+name: 用户注册
+url: http://localhost:8080/api/user/register
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \    \"username\": \"XiyueTsuki\",\r
+
+    \    \"password\": \"123456\",\r
+
+    \    \"email\": \"2731867801@qq.com\",\r
+
+    \    \"code\": \"647179\"\r
+
+    }"
+order: 771689133057951

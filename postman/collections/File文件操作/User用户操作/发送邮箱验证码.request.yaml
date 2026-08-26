@@ -1,0 +1,11 @@
+$kind: http-request
+url: http://localhost:8080/api/user/send-code
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \    \"email\": \"2731867801@qq.com\"\r
+
+    }"
+order: 1787652775448

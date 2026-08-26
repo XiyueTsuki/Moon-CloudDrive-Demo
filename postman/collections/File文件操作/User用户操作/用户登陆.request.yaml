@@ -1,0 +1,14 @@
+$kind: http-request
+name: 用户登陆
+url: http://localhost:8080/api/user/login
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \    \"email\": \"2731867801@qq.com\",\r
+
+    \    \"password\": \"123456\"\r
+
+    }"
+order: 4011941855800336
