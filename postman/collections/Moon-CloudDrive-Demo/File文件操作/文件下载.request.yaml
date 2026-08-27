@@ -1,0 +1,8 @@
+$kind: http-request
+url: http://localhost:8080/api/file/download?fileId=13
+method: GET
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+queryParams:
+  fileId: "13"
+order: 4090900023248623

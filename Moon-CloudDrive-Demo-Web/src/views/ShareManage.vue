@@ -46,7 +46,7 @@ function getStatusType(status: number) {
 }
 
 function copyShareLink(shareCode: string) {
-  const link = `${window.location.origin}/#/s/${shareCode}`
+  const link = `${window.location.origin}/#/share/${shareCode}`
   navigator.clipboard.writeText(link).then(() => {
     ElMessage.success('分享链接已复制到剪贴板')
   })

@@ -26,6 +26,22 @@ export interface SendCodeRequest {
   email: string
 }
 
+/** 文件信息，用于文件列表展示 */
+export interface FileInfo {
+  /** 文件记录ID */
+  id: number
+  /** 原始文件名 */
+  originalFilename: string
+  /** 文件大小（字节） */
+  fileSize: number
+  /** 文件MIME类型 */
+  contentType: string
+  /** 文件SHA-256哈希值 */
+  fileHash: string
+  /** 上传时间 */
+  uploadTime: string
+}
+
 export interface UploadProgress {
   percent: number
   status: string

@@ -1,0 +1,9 @@
+$kind: http-request
+url: http://localhost:8080/api/file/rename?fileId=13&newName=test-01
+method: PUT
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+queryParams:
+  fileId: "13"
+  newName: test-01
+order: 3257947957848066

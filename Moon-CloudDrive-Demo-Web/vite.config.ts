@@ -15,7 +15,8 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
-      '^/s/': {
+      // 使用 /share/ 前缀精确匹配分享链接路径
+      '/share/': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },

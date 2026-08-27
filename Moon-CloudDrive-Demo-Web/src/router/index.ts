@@ -26,21 +26,20 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/s/:shareCode',
+      path: '/share/:shareCode',
       name: 'ShareAccess',
       component: () => import('@/views/ShareAccess.vue'),
     },
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach((to, _from) => {
   const token = localStorage.getItem('token')
   if (to.meta.requiresAuth && !token) {
-    next('/login')
-  } else if ((to.path === '/login' || to.path === '/register') && token) {
-    next('/')
-  } else {
-    next()
+    return '/login'
+  }
+  if ((to.path === '/login' || to.path === '/register') && token) {
+    return '/'
   }
 })
 

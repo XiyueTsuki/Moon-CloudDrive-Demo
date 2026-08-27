@@ -75,19 +75,14 @@ public class ShareServiceImpl implements ShareService {
         Share share = validateShare(shareCode);
         File file = fileMapper.selectById(share.getFileId());
 
-        if (share.getPassword() != null) {
-            return new ShareInfoResponse(shareCode, file.getOriginalFilename(), file.getFileSize(), true, null);
-        }
-
-        String downloadUrl = ossUtil.generatePresignedUrl(file.getStoredFilename(), file.getOriginalFilename());
-        share.setDownloadCount(share.getDownloadCount() + 1);
-        shareMapper.updateById(share);
-
-        return new ShareInfoResponse(shareCode, file.getOriginalFilename(), file.getFileSize(), false, downloadUrl);
+        // 仅返回文件元数据，不返回下载链接，不递增下载次数
+        // 下载链接需通过 getDownloadUrl 接口单独获取
+        return new ShareInfoResponse(shareCode, file.getOriginalFilename(), file.getFileSize(),
+                share.getPassword() != null, null);
     }
 
     @Override
-    public String verifyPassword(String shareCode, String password) {
+    public void verifyPassword(String shareCode, String password) {
         Share share = validateShare(shareCode);
 
         if (share.getPassword() == null) {
@@ -98,12 +93,42 @@ public class ShareServiceImpl implements ShareService {
             throw new RuntimeException("提取码错误");
         }
 
+        // 仅校验提取码，不返回下载链接，不递增下载次数
+        // 下载次数在实际下载时由 getDownloadUrl 递增
+    }
+
+    @Override
+    public String getDownloadUrl(String shareCode, String password) {
+        // 重新校验分享链接有效性
+        Share share = validateShare(shareCode);
+
+        // 如果分享设置了提取码，则校验密码
+        if (share.getPassword() != null) {
+            if (password == null || password.isEmpty()) {
+                throw new RuntimeException("此链接需要提取码");
+            }
+            if (!passwordEncoder.matches(password, share.getPassword())) {
+                throw new RuntimeException("提取码错误");
+            }
+        }
+
         File file = fileMapper.selectById(share.getFileId());
         String downloadUrl = ossUtil.generatePresignedUrl(file.getStoredFilename(), file.getOriginalFilename());
 
-        share.setDownloadCount(share.getDownloadCount() + 1);
+        // 递增下载次数
+        int newCount = share.getDownloadCount() + 1;
+        share.setDownloadCount(newCount);
+
+        // 达到最大下载次数时，立即将链接状态置为失效
+        if (share.getMaxDownloads() > 0 && newCount >= share.getMaxDownloads()) {
+            share.setStatus(0);
+            log.info("分享链接已达最大下载次数，自动失效: code={}, downloadCount={}/{}",
+                    shareCode, newCount, share.getMaxDownloads());
+        }
+
         shareMapper.updateById(share);
 
+        log.info("分享文件下载: code={}, downloadCount={}/{}", shareCode, newCount, share.getMaxDownloads());
         return downloadUrl;
     }
 
@@ -128,20 +153,44 @@ public class ShareServiceImpl implements ShareService {
         log.info("分享链接已取消: code={}", shareCode);
     }
 
+    /**
+     * 校验分享链接有效性
+     * 若检测到已过期或下载次数已用完，自动将数据库状态置为失效
+     * @param shareCode 分享码
+     * @return 有效的分享实体
+     */
     private Share validateShare(String shareCode) {
         Share share = shareMapper.selectByShareCode(shareCode);
         if (share == null) {
             throw new RuntimeException("分享链接不存在");
         }
-        if (share.getExpireTime().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("分享链接已过期");
-        }
+
+        // 已手动取消的链接直接拒绝
         if (share.getStatus() == 0) {
             throw new RuntimeException("分享链接已失效");
         }
-        if (share.getMaxDownloads() > 0 && share.getDownloadCount() >= share.getMaxDownloads()) {
-            throw new RuntimeException("下载次数已用完");
+
+        boolean shouldExpire = false;
+
+        // 检查是否超过有效期
+        if (share.getExpireTime().isBefore(LocalDateTime.now())) {
+            shouldExpire = true;
         }
+
+        // 检查是否达到最大下载次数
+        if (share.getMaxDownloads() > 0 && share.getDownloadCount() >= share.getMaxDownloads()) {
+            shouldExpire = true;
+        }
+
+        // 检测到失效条件时，更新数据库状态并抛出异常
+        if (shouldExpire) {
+            share.setStatus(0);
+            shareMapper.updateById(share);
+            log.info("分享链接自动失效: code={}, reason={}", shareCode,
+                    share.getExpireTime().isBefore(LocalDateTime.now()) ? "已过期" : "下载次数已用完");
+            throw new RuntimeException("分享链接已失效");
+        }
+
         return share;
     }
 

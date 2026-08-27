@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -47,19 +48,35 @@ public class ShareController {
         return Response.ok("分享已取消");
     }
 
-    @GetMapping("/s/{shareCode}")
+    @GetMapping("/share/{shareCode}")
     public Response<ShareInfoResponse> getShareInfo(@PathVariable String shareCode) {
         ShareInfoResponse info = shareService.getShareInfo(shareCode);
         return Response.ok(info, "查询成功");
     }
 
     @RateLimit(dimension = RateLimitDimension.IP, maxRequests = 5, windowSeconds = 60, message = "提取码验证过于频繁，请稍后再试")
-    @PostMapping("/s/{shareCode}/verify")
-    public Response<String> verifyPassword(@PathVariable String shareCode, @RequestBody VerifyCodeRequest request) {
+    @PostMapping("/share/{shareCode}/verify")
+    public Response<Void> verifyPassword(@PathVariable String shareCode, @RequestBody VerifyCodeRequest request) {
         if (request.getPassword() == null || request.getPassword().isEmpty()) {
             return Response.bad(400, "提取码不能为空");
         }
-        String downloadUrl = shareService.verifyPassword(shareCode, request.getPassword());
-        return Response.ok(downloadUrl, "验证成功");
+        shareService.verifyPassword(shareCode, request.getPassword());
+        return Response.ok("验证成功");
+    }
+
+    /**
+     * 获取分享文件下载链接
+     * 仅在用户实际点击下载时递增下载次数
+     * 若分享有提取码，需传入已校验的密码
+     */
+    @GetMapping("/share/{shareCode}/download")
+    public Response<String> getDownloadUrl(@PathVariable String shareCode,
+                                           @RequestParam(required = false) String password) {
+        try {
+            String downloadUrl = shareService.getDownloadUrl(shareCode, password);
+            return Response.ok(downloadUrl, "获取下载链接成功");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
     }
 }

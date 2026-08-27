@@ -1,0 +1,12 @@
+$kind: http-request
+name: 删除文件
+url: http://localhost:8080/api/file/delete?fileId=14
+method: DELETE
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+queryParams:
+  - key: fileId
+    value: "14"
+    disabled: false
+    description: ""
+order: 2986118341367135

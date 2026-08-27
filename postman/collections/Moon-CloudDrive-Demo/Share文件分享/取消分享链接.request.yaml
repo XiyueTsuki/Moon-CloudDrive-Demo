@@ -1,5 +1,4 @@
 $kind: http-request
-name: 删除指定分享链接
 url: http://localhost:8080/api/share/NubwcInY
 method: DELETE
 headers:

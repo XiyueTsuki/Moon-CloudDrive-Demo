@@ -1,0 +1,7 @@
+$kind: http-request
+name: 查询文件列表
+url: http://localhost:8080/api/file/list
+method: GET
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+order: 2892252718284064
