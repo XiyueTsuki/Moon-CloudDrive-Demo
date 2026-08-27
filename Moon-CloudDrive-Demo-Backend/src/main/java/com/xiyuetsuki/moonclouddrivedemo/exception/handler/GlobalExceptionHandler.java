@@ -1,4 +1,4 @@
-package com.xiyuetsuki.moonclouddrivedemo.config;
+package com.xiyuetsuki.moonclouddrivedemo.exception.handler;
 
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
 import com.xiyuetsuki.moonclouddrivedemo.exception.RateLimitException;
