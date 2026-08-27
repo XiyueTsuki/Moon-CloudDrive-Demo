@@ -1,0 +1,7 @@
+$kind: http-request
+name: 删除指定分享链接
+url: http://localhost:8080/api/share/NubwcInY
+method: DELETE
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+order: 2253334305488905

@@ -4,6 +4,7 @@ import com.aliyun.oss.OSS;
 import com.aliyun.oss.event.ProgressEvent;
 import com.aliyun.oss.event.ProgressEventType;
 import com.aliyun.oss.event.ProgressListener;
+import com.aliyun.oss.model.GeneratePresignedUrlRequest;
 import com.aliyun.oss.model.PutObjectRequest;
 import com.xiyuetsuki.moonclouddrivedemo.config.OssConfig;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.net.URL;
+import java.util.Date;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -69,5 +72,21 @@ public class OssUtil {
                 ossConfig.getBucketName(),
                 ossConfig.getEndpoint(),
                 storedFilename);
+    }
+
+    public String generatePresignedUrl(String storedFilename, String originalFilename) {
+        Date expiration = new Date(System.currentTimeMillis() + 3600 * 1000);
+
+        String encodedFilename = java.net.URLEncoder.encode(originalFilename, java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
+
+        GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
+                ossConfig.getBucketName(), storedFilename);
+        request.setExpiration(expiration);
+        request.addQueryParameter("response-content-disposition",
+                "attachment;filename=" + encodedFilename);
+
+        URL url = ossClient.generatePresignedUrl(request);
+        return url.toString();
     }
 }

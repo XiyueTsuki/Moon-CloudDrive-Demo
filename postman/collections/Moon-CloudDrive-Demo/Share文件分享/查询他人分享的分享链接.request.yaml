@@ -1,0 +1,5 @@
+$kind: http-request
+name: 查询他人分享的分享链接
+url: http://localhost:8080/s/BuOEKxBR
+method: GET
+order: 2274103202806470

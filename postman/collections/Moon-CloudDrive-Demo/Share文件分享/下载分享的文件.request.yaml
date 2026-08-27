@@ -1,0 +1,12 @@
+$kind: http-request
+name: 下载分享的文件
+url: http://localhost:8080/s/BuOEKxBR/verify
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \    \"password\": \"123456\"\r
+
+    }"
+order: 2775171986194139

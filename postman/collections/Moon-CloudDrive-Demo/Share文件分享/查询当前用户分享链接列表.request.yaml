@@ -1,0 +1,7 @@
+$kind: http-request
+name: 查询当前用户分享链接列表
+url: http://localhost:8080/api/share/my
+method: GET
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+order: 1617572519947493

@@ -1,0 +1,20 @@
+$kind: http-request
+name: 创建文件分享链接
+url: http://localhost:8080/api/share/create
+method: POST
+headers:
+  satoken: 3b885472-74df-4274-90b8-931252516568
+body:
+  type: json
+  content: "{\r
+
+    \    \"fileId\": \"1\",\r
+
+    \    \"password\": \"123456\",\r
+
+    \    \"expireHours\": \"1\",\r
+
+    \    \"maxDownloads\": \"3\"\r
+
+    }"
+order: 1787815015747
