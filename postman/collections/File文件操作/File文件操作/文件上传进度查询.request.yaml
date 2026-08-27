@@ -1,6 +1,10 @@
 $kind: http-request
-url: http://localhost:8080/api/file/progress?taskId=6b739d8a98f04c8a9e70d774e2cc23b8
+name: 文件上传进度查询
+url: http://localhost:8080/api/file/progress?taskId=17c7e51b7ffb4e70b3b88d7fa561eb81
 method: GET
 queryParams:
-  taskId: 6b739d8a98f04c8a9e70d774e2cc23b8
+  - key: taskId
+    value: 17c7e51b7ffb4e70b3b88d7fa561eb81
+    disabled: false
+    description: ""
 order: 2196185596960870

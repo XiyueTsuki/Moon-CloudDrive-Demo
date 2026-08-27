@@ -1,5 +1,7 @@
 package com.xiyuetsuki.moonclouddrivedemo.controller;
 
+import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimit;
+import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimitDimension;
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.UploadProgress;
 import com.xiyuetsuki.moonclouddrivedemo.service.FileService;
@@ -22,6 +24,7 @@ public class FileController {
     private final FileService fileService;
     private final ProgressTracker progressTracker;
 
+    @RateLimit(dimension = RateLimitDimension.USER, maxRequests = 5, windowSeconds = 60, message = "上传过于频繁，请1分钟后再试")
     @PostMapping("/upload")
     public Response<String> uploadFile(MultipartFile file) {
         if (file.isEmpty()) {
