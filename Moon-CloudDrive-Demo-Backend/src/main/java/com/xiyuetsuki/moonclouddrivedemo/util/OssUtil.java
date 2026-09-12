@@ -89,4 +89,14 @@ public class OssUtil {
         URL url = ossClient.generatePresignedUrl(request);
         return url.toString();
     }
+
+    /**
+     * 从 OSS 中删除指定文件
+     *
+     * @param storedFilename 文件在OSS中的存储名称
+     */
+    public void deleteFile(String storedFilename) {
+        ossClient.deleteObject(ossConfig.getBucketName(), storedFilename);
+        log.info("OSS文件删除成功: {}", storedFilename);
+    }
 }

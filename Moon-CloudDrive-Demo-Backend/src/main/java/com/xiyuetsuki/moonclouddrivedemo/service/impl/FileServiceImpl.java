@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -71,14 +72,15 @@ public class FileServiceImpl implements FileService {
     @Override
     public void deleteFile(Long fileId) {
         long userId = StpUtil.getLoginIdAsLong();
-        // 查询文件记录，确保文件存在且属于当前用户
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
         if (file == null) {
             throw new RuntimeException("文件不存在或无权操作");
         }
-        // 删除数据库记录
-        fileMapper.deleteById(fileId);
-        log.info("文件删除成功: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+        // 软删除：设置删除标记和删除时间，文件进入回收站
+        file.setDeleted(1);
+        file.setDeleteTime(LocalDateTime.now());
+        fileMapper.updateById(file);
+        log.info("文件已移入回收站: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
     }
 
     @Override
@@ -115,6 +117,73 @@ public class FileServiceImpl implements FileService {
         return presignedUrl;
     }
 
+    // ==================== 回收站功能 ====================
+
+    @Override
+    public List<FileVO> listRecycleBin() {
+        long userId = StpUtil.getLoginIdAsLong();
+        List<File> files = fileMapper.selectRecycleBinByUserId(userId);
+        return files.stream().map(this::toFileVO).collect(Collectors.toList());
+    }
+
+    @Override
+    public void restoreFile(Long fileId) {
+        long userId = StpUtil.getLoginIdAsLong();
+        File file = fileMapper.selectByUserIdAndId(userId, fileId);
+        if (file == null) {
+            throw new RuntimeException("回收站中不存在该文件或无权操作");
+        }
+        if (file.getDeleted() == null || file.getDeleted() != 1) {
+            throw new RuntimeException("该文件不在回收站中");
+        }
+        // 清除删除标记和删除时间，文件恢复为正常状态
+        file.setDeleted(0);
+        file.setDeleteTime(null);
+        fileMapper.updateById(file);
+        log.info("文件已从回收站恢复: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+    }
+
+    @Override
+    public void permanentDeleteFile(Long fileId) {
+        long userId = StpUtil.getLoginIdAsLong();
+        File file = fileMapper.selectByUserIdAndId(userId, fileId);
+        if (file == null) {
+            throw new RuntimeException("文件不存在或无权操作");
+        }
+        if (file.getDeleted() == null || file.getDeleted() != 1) {
+            throw new RuntimeException("只能彻底删除回收站中的文件");
+        }
+        // 物理删除数据库记录
+        fileMapper.deleteById(fileId);
+        // 同时从 OSS 中删除实际文件
+        ossUtil.deleteFile(file.getStoredFilename());
+        log.info("文件已彻底删除: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+    }
+
+    @Override
+    public void cleanupExpiredRecycleBinFiles() {
+        // 查询回收站中超过默认保留天数的文件
+        List<File> expiredFiles = fileMapper.selectExpiredRecycleBinFiles(RECYCLE_RETENTION_DAYS);
+        if (expiredFiles.isEmpty()) {
+            log.info("回收站定时清理：无过期文件");
+            return;
+        }
+        log.info("回收站定时清理：开始清理 {} 个过期文件", expiredFiles.size());
+        for (File file : expiredFiles) {
+            try {
+                // 物理删除数据库记录
+                fileMapper.deleteById(file.getId());
+                // 从 OSS 中删除实际文件
+                ossUtil.deleteFile(file.getStoredFilename());
+                log.info("回收站定时清理成功: fileId={}, filename={}", file.getId(), file.getOriginalFilename());
+            } catch (Exception e) {
+                // 单个文件清理失败不影响后续文件的清理
+                log.error("回收站定时清理失败: fileId={}, 原因={}", file.getId(), e.getMessage());
+            }
+        }
+        log.info("回收站定时清理：完成，成功清理 {} 个文件", expiredFiles.size());
+    }
+
     /**
      * 将 File 实体转换为 FileVO 视图对象，隐藏内部存储细节
      *
@@ -129,6 +198,8 @@ public class FileServiceImpl implements FileService {
         vo.setContentType(file.getContentType());
         vo.setFileHash(file.getFileHash());
         vo.setUploadTime(file.getUploadTime());
+        vo.setDeleted(file.getDeleted());
+        vo.setDeleteTime(file.getDeleteTime());
         return vo;
     }
 }

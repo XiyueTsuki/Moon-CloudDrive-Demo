@@ -26,6 +26,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/recycle-bin',
+      name: 'RecycleBin',
+      component: () => import('@/views/RecycleBin.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/share/:shareCode',
       name: 'ShareAccess',
       component: () => import('@/views/ShareAccess.vue'),

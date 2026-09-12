@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS tb_file (
     user_id BIGINT NOT NULL COMMENT '上传用户ID',
     oss_url VARCHAR(1024) NOT NULL COMMENT 'OSS访问URL',
     upload_time DATETIME NOT NULL COMMENT '上传时间',
+    deleted INT DEFAULT 0 COMMENT '软删除标记：0-正常，1-已删除（回收站中）',
+    delete_time DATETIME NULL COMMENT '进入回收站的时间',
     INDEX idx_file_hash (file_hash),
     INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文件上传记录表';

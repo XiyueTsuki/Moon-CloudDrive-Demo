@@ -21,7 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 /**
- * 文件控制器，提供文件上传、查询、下载、删除、重命名等 RESTful API 接口
+ * 文件控制器，提供文件上传、查询、下载、删除、重命名、回收站等 RESTful API 接口
  */
 @RestController
 @RequestMapping("/api/file")
@@ -70,7 +70,7 @@ public class FileController {
 
     /**
      * 文件列表查询接口
-     * 返回当前登录用户的所有文件，按上传时间倒序排列
+     * 返回当前登录用户的所有正常文件（不含回收站），按上传时间倒序排列
      *
      * @return 文件信息列表
      */
@@ -81,8 +81,8 @@ public class FileController {
     }
 
     /**
-     * 文件删除接口
-     * 仅允许删除自己上传的文件
+     * 文件删除接口（软删除）
+     * 将文件移入回收站，不立即物理删除，30天后自动清理
      *
      * @param fileId 文件ID
      * @return 操作结果
@@ -91,7 +91,7 @@ public class FileController {
     public Response<Void> deleteFile(@RequestParam Long fileId) {
         try {
             fileService.deleteFile(fileId);
-            return Response.ok("删除成功");
+            return Response.ok("文件已移入回收站");
         } catch (RuntimeException e) {
             return Response.bad(400, e.getMessage());
         }
@@ -127,6 +127,54 @@ public class FileController {
         try {
             String downloadUrl = fileService.getDownloadUrl(fileId);
             return Response.ok(downloadUrl, "获取下载链接成功");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    // ==================== 回收站相关接口 ====================
+
+    /**
+     * 回收站文件列表查询接口
+     * 返回当前登录用户回收站中的所有文件
+     *
+     * @return 回收站文件列表
+     */
+    @GetMapping("/recycle-bin/list")
+    public Response<List<FileVO>> listRecycleBin() {
+        List<FileVO> files = fileService.listRecycleBin();
+        return Response.ok(files, "查询成功");
+    }
+
+    /**
+     * 回收站文件恢复接口
+     * 将回收站中的文件恢复为正常状态
+     *
+     * @param fileId 文件ID
+     * @return 操作结果
+     */
+    @PutMapping("/recycle-bin/restore")
+    public Response<Void> restoreFile(@RequestParam Long fileId) {
+        try {
+            fileService.restoreFile(fileId);
+            return Response.ok("文件恢复成功");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    /**
+     * 回收站文件彻底删除接口
+     * 物理删除文件记录并从OSS中删除实际文件，不可恢复
+     *
+     * @param fileId 文件ID
+     * @return 操作结果
+     */
+    @DeleteMapping("/recycle-bin/permanent-delete")
+    public Response<Void> permanentDeleteFile(@RequestParam Long fileId) {
+        try {
+            fileService.permanentDeleteFile(fileId);
+            return Response.ok("文件已彻底删除");
         } catch (RuntimeException e) {
             return Response.bad(400, e.getMessage());
         }

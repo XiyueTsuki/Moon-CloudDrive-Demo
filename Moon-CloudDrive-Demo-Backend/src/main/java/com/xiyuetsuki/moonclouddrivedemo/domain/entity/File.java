@@ -29,4 +29,10 @@ public class File {
     private String ossUrl;
 
     private LocalDateTime uploadTime;
+
+    /** 软删除标记：0-正常，1-已删除（回收站中） */
+    private Integer deleted;
+
+    /** 进入回收站的时间，用于计算30天自动清理 */
+    private LocalDateTime deleteTime;
 }

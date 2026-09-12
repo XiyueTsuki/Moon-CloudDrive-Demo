@@ -48,6 +48,10 @@ export interface FileInfo {
   fileHash: string
   /** 上传时间 */
   uploadTime: string
+  /** 软删除标记：0-正常，1-已删除（回收站中） */
+  deleted: number
+  /** 进入回收站的时间 */
+  deleteTime: string
 }
 
 export interface UploadProgress {

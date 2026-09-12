@@ -27,4 +27,10 @@ public class FileVO {
 
     /** 上传时间 */
     private LocalDateTime uploadTime;
+
+    /** 软删除标记：0-正常，1-已删除（回收站中） */
+    private Integer deleted;
+
+    /** 进入回收站的时间 */
+    private LocalDateTime deleteTime;
 }

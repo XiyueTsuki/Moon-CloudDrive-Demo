@@ -1,6 +1,6 @@
 # Moon-CloudDrive-Demo
 
-Moon-CloudDrive-Demo 是一个前后端分离的云盘文件分享系统，支持文件上传、下载、删除、重命名以及创建带提取码的分享链接，可供他人访问和下载。
+Moon-CloudDrive-Demo 是一个前后端分离的云盘文件分享系统，支持文件上传、下载、回收站、分享链接等功能。删除的文件会进入回收站保留 30 天，分享链接支持提取码、有效期和下载次数限制。
 
 ## 技术栈
 
@@ -32,6 +32,7 @@ Moon-CloudDrive-Demo/
 │       ├── domain/                   # 实体、DTO、通用响应
 │       ├── exception/                # 异常处理
 │       ├── mapper/                   # MyBatis-Plus Mapper
+│       ├── scheduled/                # 定时任务（回收站清理）
 │       ├── service/                  # 业务逻辑层
 │       └── util/                     # 工具类
 ├── Moon-CloudDrive-Demo-Web/         # Vue 3 前端
@@ -56,6 +57,7 @@ Moon-CloudDrive-Demo/
 | 发送邮箱验证码 | `POST /api/user/send-code` | 注册前发送验证码到邮箱 |
 | 用户注册 | `POST /api/user/register` | 邮箱 + 验证码 + 密码注册 |
 | 用户登录 | `POST /api/user/login` | 邮箱 + 密码登录，返回 Token |
+| 修改密码 | `POST /api/user/change-password` | 旧密码 + 新密码，需登录后操作 |
 
 ### 文件模块
 
@@ -63,10 +65,19 @@ Moon-CloudDrive-Demo/
 |------|-----|------|
 | 文件上传 | `POST /api/file/upload` | 异步上传至阿里云 OSS |
 | 上传进度 | `GET /api/file/progress?taskId=` | 轮询上传进度 |
-| 文件列表 | `GET /api/file/list` | 查询当前用户的文件列表 |
+| 文件列表 | `GET /api/file/list` | 查询当前用户的正常文件（不含回收站） |
 | 文件下载 | `GET /api/file/download?fileId=` | 获取 OSS 预签名下载 URL |
-| 文件删除 | `DELETE /api/file/delete?fileId=` | 删除文件（OSS + 数据库） |
+| 文件删除（软删除） | `DELETE /api/file/delete?fileId=` | 将文件移入回收站，30 天后自动彻底删除 |
 | 文件重命名 | `PUT /api/file/rename?fileId=&newName=` | 重命名文件 |
+
+### 回收站模块
+
+| 功能 | API | 说明 |
+|------|-----|------|
+| 回收站列表 | `GET /api/file/recycle-bin/list` | 查询当前用户的回收站文件 |
+| 恢复文件 | `PUT /api/file/recycle-bin/restore?fileId=` | 将文件从回收站恢复为正常状态 |
+| 彻底删除 | `DELETE /api/file/recycle-bin/permanent-delete?fileId=` | 物理删除数据库记录 + OSS 文件，不可恢复 |
+| 自动清理 | `@Scheduled cron: 0 0 2 * * ?` | 每天凌晨 2 点清理超过 30 天的回收站文件 |
 
 ### 分享模块
 
@@ -107,7 +118,7 @@ docker compose up -d
 
 ### 3. 初始化数据库
 
-执行 `sql/` 目录下的建表脚本：
+> 全新部署：依次执行 `sql/` 目录下的建表脚本。
 
 ```bash
 # 连接 MySQL 后依次执行
@@ -154,8 +165,9 @@ npm run dev
 |------|------|:----------:|
 | `/login` | 登录页 | 否 |
 | `/register` | 注册页 | 否 |
-| `/` | 文件管理首页（上传、列表、下载、重命名、删除） | 是 |
+| `/` | 文件管理首页（上传、列表、下载、重命名、删除、创建分享） | 是 |
 | `/shares` | 分享管理（查看/取消分享） | 是 |
+| `/recycle-bin` | 回收站（恢复/彻底删除） | 是 |
 | `/share/:shareCode` | 分享文件访问页（提取码验证 + 下载） | 否 |
 
 ## 架构说明
@@ -164,9 +176,12 @@ npm run dev
 - **Hash 路由**：采用 `createWebHashHistory`，避免部署时刷新 404
 - **Token 鉴权**：Sa-Token + Redis 实现分布式 Session
 - **异步上传**：文件上传到 OSS 后异步处理，前端轮询进度
+- **软删除**：文件删除后进入回收站保留 30 天，可恢复或彻底删除
+- **定时清理**：每天凌晨 2 点通过 `@Scheduled` 自动清理回收站中超过 30 天的文件
 - **分享链接**：8 位 Base62 随机码，支持提取码保护、有效期和下载次数限制
 - **下载计数**：仅在用户实际点击下载时递增，验证提取码不消耗次数
 - **自动失效**：过期或达到最大下载次数后自动将链接状态置为失效
+- **密码修改**：用户可在首页用户菜单中通过弹窗修改密码，需验证旧密码
 - **API 限流**：通过自定义 `@RateLimit` 注解 + AOP 实现 IP 级别限流
 
 ## Postman 接口调试

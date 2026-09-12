@@ -92,3 +92,37 @@ export function renameFile(fileId: number, newName: string) {
     params: { fileId, newName },
   })
 }
+
+// ==================== 回收站相关 API ====================
+
+/**
+ * 获取回收站文件列表
+ * 返回当前登录用户回收站中的所有文件
+ */
+export function getRecycleBinList() {
+  return http.get<ApiResponse<FileInfo[]>>('/api/file/recycle-bin/list')
+}
+
+/**
+ * 从回收站恢复文件
+ * 将回收站中的文件恢复为正常状态
+ *
+ * @param fileId 文件ID
+ */
+export function restoreFile(fileId: number) {
+  return http.put<ApiResponse<null>>('/api/file/recycle-bin/restore', null, {
+    params: { fileId },
+  })
+}
+
+/**
+ * 彻底删除回收站中的文件
+ * 物理删除数据库记录并从OSS中删除实际文件，不可恢复
+ *
+ * @param fileId 文件ID
+ */
+export function permanentDeleteFile(fileId: number) {
+  return http.delete<ApiResponse<null>>('/api/file/recycle-bin/permanent-delete', {
+    params: { fileId },
+  })
+}

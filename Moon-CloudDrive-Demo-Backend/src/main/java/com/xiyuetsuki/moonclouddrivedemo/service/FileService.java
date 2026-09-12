@@ -10,6 +10,9 @@ import java.util.List;
  */
 public interface FileService {
 
+    /** 回收站文件默认保留天数 */
+    int RECYCLE_RETENTION_DAYS = 30;
+
     /**
      * 上传文件，返回异步任务ID用于进度查询
      *
@@ -19,14 +22,14 @@ public interface FileService {
     String uploadFile(MultipartFile file);
 
     /**
-     * 查询当前登录用户的文件列表
+     * 查询当前登录用户的正常文件列表（不含回收站）
      *
      * @return 文件信息列表
      */
     List<FileVO> listFiles();
 
     /**
-     * 删除指定文件（仅文件所有者可操作）
+     * 软删除指定文件，将文件移入回收站（仅文件所有者可操作）
      *
      * @param fileId 文件ID
      */
@@ -47,4 +50,30 @@ public interface FileService {
      * @return 预签名下载URL
      */
     String getDownloadUrl(Long fileId);
+
+    /**
+     * 查询当前登录用户的回收站文件列表
+     *
+     * @return 回收站文件列表
+     */
+    List<FileVO> listRecycleBin();
+
+    /**
+     * 从回收站恢复文件
+     *
+     * @param fileId 文件ID
+     */
+    void restoreFile(Long fileId);
+
+    /**
+     * 彻底删除回收站中的文件（物理删除 + OSS删除）
+     *
+     * @param fileId 文件ID
+     */
+    void permanentDeleteFile(Long fileId);
+
+    /**
+     * 定时清理：彻底删除回收站中超过 {@link #RECYCLE_RETENTION_DAYS} 天的文件
+     */
+    void cleanupExpiredRecycleBinFiles();
 }

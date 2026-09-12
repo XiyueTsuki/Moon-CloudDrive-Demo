@@ -209,7 +209,7 @@ async function handleDownload(file: FileInfo) {
 async function handleDelete(file: FileInfo) {
   try {
     await ElMessageBox.confirm(
-      `确定要删除文件 "${file.originalFilename}" 吗？删除后不可恢复。`,
+      `确定要删除文件 "${file.originalFilename}" 吗？删除后文件将移入回收站，30天后自动彻底清除。`,
       '确认删除',
       {
         confirmButtonText: '删除',
@@ -218,7 +218,7 @@ async function handleDelete(file: FileInfo) {
       },
     )
     await deleteFile(file.id)
-    ElMessage.success('文件删除成功')
+    ElMessage.success('文件已移入回收站')
     loadFileList() // 删除后刷新列表
   } catch {
     // 用户取消删除或删除失败
@@ -401,6 +401,7 @@ onUnmounted(() => {
       </div>
       <div class="header-right">
         <el-button text @click="router.push('/shares')">分享管理</el-button>
+        <el-button text @click="router.push('/recycle-bin')">回收站</el-button>
         <el-dropdown>
           <span class="user-info">
             <el-avatar :size="32" icon="UserFilled" />
