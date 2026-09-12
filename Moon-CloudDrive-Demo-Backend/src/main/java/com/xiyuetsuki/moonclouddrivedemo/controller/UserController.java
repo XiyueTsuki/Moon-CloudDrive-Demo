@@ -1,6 +1,7 @@
 package com.xiyuetsuki.moonclouddrivedemo.controller;
 
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChangePasswordRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.LoginRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.LoginResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.RegisterRequest;
@@ -82,5 +83,28 @@ public class UserController {
         LoginResponse loginResponse = userService.login(request);
 
         return Response.ok(loginResponse, "登录成功");
+    }
+
+    /**
+     * 修改密码
+     * 用户登录后提交旧密码和新密码进行修改
+     * @param request 包含旧密码(oldPassword)和新密码(newPassword)
+     * @return 操作结果
+     */
+    @PostMapping("/change-password")
+    public Response<Void> changePassword(@RequestBody ChangePasswordRequest request) {
+        if (request.getOldPassword() == null || request.getOldPassword().isBlank()) {
+            return Response.bad(400, "旧密码不能为空");
+        }
+        if (request.getNewPassword() == null || request.getNewPassword().isBlank()) {
+            return Response.bad(400, "新密码不能为空");
+        }
+        if (request.getNewPassword().length() < 6) {
+            return Response.bad(400, "新密码长度不能少于6位");
+        }
+
+        userService.changePassword(request);
+
+        return Response.ok("密码修改成功");
     }
 }

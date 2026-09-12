@@ -1,6 +1,7 @@
 package com.xiyuetsuki.moonclouddrivedemo.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChangePasswordRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.LoginRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.LoginResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.RegisterRequest;
@@ -114,6 +115,37 @@ public class UserServiceImpl implements UserService {
         log.info("用户登录成功: {}", request.getEmail());
 
         return new LoginResponse(token, user.getUsername(), user.getEmail());
+    }
+
+    /**
+     * 修改密码
+     * 校验旧密码正确性后，加密存储新密码
+     * @param request 包含旧密码和新密码的请求体
+     */
+    @Override
+    public void changePassword(ChangePasswordRequest request) {
+        // 通过 Sa-Token 获取当前登录用户 ID
+        long userId = StpUtil.getLoginIdAsLong();
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new RuntimeException("用户不存在");
+        }
+
+        // 校验旧密码是否正确
+        if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
+            throw new RuntimeException("旧密码错误");
+        }
+
+        // 校验新密码不能与旧密码相同
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
+            throw new RuntimeException("新密码不能与旧密码相同");
+        }
+
+        // 加密存储新密码
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userMapper.updateById(user);
+
+        log.info("用户密码修改成功: userId={}", userId);
     }
 
     /**

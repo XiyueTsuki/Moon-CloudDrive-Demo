@@ -26,6 +26,14 @@ export interface SendCodeRequest {
   email: string
 }
 
+/** 修改密码请求参数 */
+export interface ChangePasswordRequest {
+  /** 用户当前密码 */
+  oldPassword: string
+  /** 用户新密码 */
+  newPassword: string
+}
+
 /** 文件信息，用于文件列表展示 */
 export interface FileInfo {
   /** 文件记录ID */

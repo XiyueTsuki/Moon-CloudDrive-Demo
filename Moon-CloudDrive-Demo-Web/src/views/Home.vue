@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { uploadFile, getProgress, getFileList, getDownloadUrl, deleteFile, renameFile } from '@/api/file'
 import { createShare } from '@/api/share'
+import { changePassword } from '@/api/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Download, Delete, Edit, Share } from '@element-plus/icons-vue'
 import type { FileInfo } from '@/types/api'
@@ -54,6 +55,18 @@ const sharePassword = ref('')
 const shareExpireHours = ref(24)
 /** 分享弹窗：最大下载次数，0 表示不限制 */
 const shareMaxDownloads = ref(0)
+
+// ==================== 修改密码弹窗相关状态 ====================
+/** 修改密码对话框是否可见 */
+const passwordDialogVisible = ref(false)
+/** 修改密码：旧密码 */
+const oldPassword = ref('')
+/** 修改密码：新密码 */
+const newPassword = ref('')
+/** 修改密码：确认新密码 */
+const confirmPassword = ref('')
+/** 修改密码：是否正在提交 */
+const passwordLoading = ref(false)
 
 // ==================== 上传功能 ====================
 
@@ -312,6 +325,60 @@ function handleLogout() {
   router.push('/login')
 }
 
+// ==================== 修改密码功能 ====================
+
+/**
+ * 打开修改密码对话框
+ * 重置所有表单字段
+ */
+function openChangePasswordDialog() {
+  oldPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  passwordDialogVisible.value = true
+}
+
+/**
+ * 提交修改密码请求
+ * 先做前端校验（两次密码一致性），再调用后端接口
+ */
+async function submitChangePassword() {
+  // 前端校验：新密码不能为空且长度不小于6位
+  if (!oldPassword.value) {
+    ElMessage.warning('请输入旧密码')
+    return
+  }
+  if (!newPassword.value) {
+    ElMessage.warning('请输入新密码')
+    return
+  }
+  if (newPassword.value.length < 6) {
+    ElMessage.warning('新密码长度不能少于6位')
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+
+  passwordLoading.value = true
+  try {
+    await changePassword({
+      oldPassword: oldPassword.value,
+      newPassword: newPassword.value,
+    })
+    ElMessage.success('密码修改成功，请使用新密码重新登录')
+    passwordDialogVisible.value = false
+    // 修改密码后退出登录，引导用户用新密码重新登录
+    userStore.logout()
+    router.push('/login')
+  } catch {
+    // 错误已在拦截器中统一处理（如旧密码错误、新密码与旧密码相同等）
+  } finally {
+    passwordLoading.value = false
+  }
+}
+
 // ==================== 生命周期 ====================
 
 /** 组件挂载时加载文件列表 */
@@ -343,6 +410,9 @@ onUnmounted(() => {
             <el-dropdown-menu>
               <el-dropdown-item>
                 <span>{{ userStore.email }}</span>
+              </el-dropdown-item>
+              <el-dropdown-item @click="openChangePasswordDialog">
+                <span>修改密码</span>
               </el-dropdown-item>
               <el-dropdown-item divided @click="handleLogout">
                 <span style="color: #f56c6c">退出登录</span>
@@ -568,6 +638,48 @@ onUnmounted(() => {
       <template #footer>
         <el-button @click="shareDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitCreateShare">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 修改密码对话框 -->
+    <el-dialog
+      v-model="passwordDialogVisible"
+      title="修改密码"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="80px" label-position="left">
+        <el-form-item label="旧密码">
+          <el-input
+            v-model="oldPassword"
+            type="password"
+            placeholder="请输入旧密码"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input
+            v-model="newPassword"
+            type="password"
+            placeholder="请输入新密码（至少6位）"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item label="确认密码">
+          <el-input
+            v-model="confirmPassword"
+            type="password"
+            placeholder="请再次输入新密码"
+            show-password
+            @keyup.enter="submitChangePassword"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="passwordLoading" @click="submitChangePassword">
+          确认修改
+        </el-button>
       </template>
     </el-dialog>
   </div>
