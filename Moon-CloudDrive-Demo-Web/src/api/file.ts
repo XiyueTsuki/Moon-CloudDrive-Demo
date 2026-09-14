@@ -3,7 +3,7 @@
  * 包含文件上传、进度查询、列表、下载、删除、重命名等功能
  */
 import http from './index'
-import type { ApiResponse, FileInfo, UploadProgress, PageResult } from '@/types/api'
+import type { ApiResponse, FileInfo, UploadProgress, PageResult, ChunkInitRequest, ChunkInitResponse, ChunkProgressResponse, ChunkCompleteRequest } from '@/types/api'
 
 /**
  * 上传文件
@@ -183,5 +183,80 @@ export function moveFile(fileId: number, targetParentId?: number | null) {
 export function getFolderPath(folderId?: number | null) {
   return http.get<ApiResponse<FileInfo[]>>('/api/file/folder/path', {
     params: folderId != null ? { folderId } : {},
+  })
+}
+
+// ==================== 分片上传（大文件）API ====================
+
+/**
+ * 初始化分片上传
+ * 提交文件基本信息（名称、大小、哈希）获取分片上传参数和uploadId，
+ * 如果文件哈希已存在则触发秒传，跳过实际上传流程
+ *
+ * @param data 包含文件名、大小、哈希、目标文件夹的请求参数
+ */
+export function initChunkUpload(data: ChunkInitRequest) {
+  return http.post<ApiResponse<ChunkInitResponse>>('/api/file/chunk/init', data)
+}
+
+/**
+ * 上传单个分片
+ * 将文件分片以 multipart/form-data 格式提交，支持上传进度回调
+ *
+ * @param chunk      分片 Blob 数据
+ * @param uploadId   上传任务标识
+ * @param chunkIndex 分片序号（从0开始）
+ * @param onProgress 分片上传进度回调（可选）
+ */
+export function uploadChunk(chunk: Blob, uploadId: string, chunkIndex: number, onProgress?: (percent: number) => void) {
+  const formData = new FormData()
+  formData.append('chunk', chunk)
+  formData.append('uploadId', uploadId)
+  formData.append('chunkIndex', String(chunkIndex))
+
+  return http.post<ApiResponse<null>>('/api/file/chunk/upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: (progressEvent) => {
+      if (onProgress && progressEvent.total) {
+        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+        onProgress(percent)
+      }
+    },
+  })
+}
+
+/**
+ * 完成分片上传
+ * 所有分片上传完毕后调用，通知后端合并OSS碎片并创建文件记录
+ *
+ * @param data 包含uploadId和文件MIME类型
+ */
+export function completeChunkUpload(data: ChunkCompleteRequest) {
+  return http.post<ApiResponse<FileInfo>>('/api/file/chunk/complete', data)
+}
+
+/**
+ * 查询分片上传进度
+ * 用于断点续传时判断哪些分片已上传，客户端跳过已完成分片继续上传剩余部分
+ *
+ * @param uploadId 上传任务标识
+ */
+export function getChunkProgress(uploadId: string) {
+  return http.get<ApiResponse<ChunkProgressResponse>>('/api/file/chunk/progress', {
+    params: { uploadId },
+  })
+}
+
+/**
+ * 取消分片上传
+ * 中止OSS端的碎片并清理Redis缓存中的上传信息
+ *
+ * @param uploadId 上传任务标识
+ */
+export function abortChunkUpload(uploadId: string) {
+  return http.delete<ApiResponse<null>>('/api/file/chunk/abort', {
+    params: { uploadId },
   })
 }

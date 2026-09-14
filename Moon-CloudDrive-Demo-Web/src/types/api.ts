@@ -59,9 +59,60 @@ export interface FileInfo {
 }
 
 export interface UploadProgress {
+  /** 进度百分比（0-100） */
   percent: number
+  /** 状态：uploading / done / failed */
   status: string
+  /** 状态描述信息 */
   message: string
+}
+
+/** 分片上传初始化请求参数 */
+export interface ChunkInitRequest {
+  /** 原始文件名 */
+  fileName: string
+  /** 文件总大小（字节） */
+  fileSize: number
+  /** 文件SHA-256哈希值，用于秒传去重 */
+  fileHash: string
+  /** 目标文件夹ID，null表示根目录 */
+  parentId: number | null
+}
+
+/** 分片上传初始化响应 */
+export interface ChunkInitResponse {
+  /** 本次上传任务的唯一标识 */
+  uploadId: string
+  /** 总的分片数量 */
+  chunkCount: number
+  /** 每个分片的大小（字节） */
+  chunkSize: number
+  /** 是否秒传成功（文件已存在，无需上传） */
+  instantComplete: boolean
+  /** 秒传成功时的文件信息 */
+  file: FileInfo | null
+}
+
+/** 分片上传进度响应，用于断点续传时判断哪些分片已上传 */
+export interface ChunkProgressResponse {
+  /** 本次上传任务的唯一标识 */
+  uploadId: string
+  /** 总的分片数量 */
+  chunkCount: number
+  /** 已完成的分片数量 */
+  completedCount: number
+  /** 已完成的分片序号集合（从1开始） */
+  completedParts: number[]
+  /** 完成百分比（0-100） */
+  percent: number
+}
+
+/** 完成分片上传请求参数 */
+export interface ChunkCompleteRequest {
+  /** 上传任务唯一标识 */
+  uploadId: string
+  /** 文件MIME类型 */
+  contentType: string
 }
 
 export interface CreateShareRequest {

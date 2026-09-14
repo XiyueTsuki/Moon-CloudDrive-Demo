@@ -69,6 +69,12 @@ aliyun:
     access-key-secret: ${OSS_ACCESS_KEY_SECRET}
     bucket-name: moon-clouddrive-demo
 
+# ========== 分片上传配置 ==========
+moon:
+  chunk:
+    upload:
+      chunk-size: 5242880
+
 # ========== Knife4j / SpringDoc 接口文档配置 ==========
 springdoc:
   swagger-ui:

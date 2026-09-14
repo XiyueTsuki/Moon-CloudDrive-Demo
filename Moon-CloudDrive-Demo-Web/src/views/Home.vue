@@ -10,6 +10,7 @@ import {
   deleteFile, renameFile, createFolder, moveFile, getFolderPath,
 } from '@/api/file'
 import { createShare } from '@/api/share'
+import { chunkUpload, shouldUseChunkUpload, abortChunkUpload } from '@/utils/chunkUpload'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search } from '@element-plus/icons-vue'
 import type { FileInfo } from '@/types/api'
@@ -19,6 +20,7 @@ const uploading = ref(false)
 const uploadPercent = ref(0)
 const uploadStatus = ref('')
 const uploadMessage = ref('')
+const uploadStage = ref('')
 const currentTaskId = ref('')
 const selectedFile = ref<File | null>(null)
 const uploadDialogVisible = ref(false)
@@ -115,7 +117,51 @@ async function handleUpload() {
 
   uploading.value = true
   uploadPercent.value = 0
+  uploadMessage.value = ''
+
+  // 文件 > 10MB 自动启用分片上传，≤ 10MB 使用普通上传
+  if (shouldUseChunkUpload(selectedFile.value)) {
+    uploadStatus.value = 'uploading'
+    uploadStage.value = 'chunk'
+
+    try {
+      await chunkUpload(selectedFile.value, currentParentId.value, {
+        onProgress(percent, message) {
+          uploadPercent.value = percent
+          uploadMessage.value = message
+        },
+        onStatusChange(status) {
+          if (status === 'done') {
+            uploadStatus.value = 'done'
+            uploadStage.value = ''
+            uploading.value = false
+            // 延迟关闭对话框让用户看到完成状态
+            setTimeout(() => {
+              uploadDialogVisible.value = false
+              selectedFile.value = null
+            }, 1200)
+            refreshFileList()
+          } else if (status === 'failed') {
+            uploadStatus.value = 'failed'
+            uploadStage.value = ''
+            ElMessage.error(uploadMessage.value || '上传失败')
+            uploading.value = false
+          }
+        },
+      })
+    } catch (e) {
+      uploadStatus.value = 'failed'
+      uploadStage.value = ''
+      const errMsg = e instanceof Error ? e.message : '上传失败'
+      ElMessage.error(errMsg)
+      uploading.value = false
+    }
+    return
+  }
+
+  // 小文件：使用原有普通上传 + 轮询进度
   uploadStatus.value = 'uploading'
+  uploadStage.value = 'simple'
   uploadMessage.value = '正在上传...'
 
   try {
@@ -125,6 +171,7 @@ async function handleUpload() {
     startPolling(taskId)
   } catch {
     uploading.value = false
+    uploadStage.value = ''
   }
 }
 
@@ -553,7 +600,12 @@ onUnmounted(() => {
           :stroke-width="20"
           :text-inside="true"
         />
-        <p v-if="uploadMessage" class="progress-msg">{{ uploadMessage }}</p>
+        <p v-if="uploadMessage" class="progress-msg">
+          {{ uploadMessage }}
+          <template v-if="uploadStage === 'chunk' && uploadPercent >= 10 && uploadPercent < 95">
+            ，超出 10MB 已自动启用分片上传
+          </template>
+        </p>
       </div>
 
       <template #footer>

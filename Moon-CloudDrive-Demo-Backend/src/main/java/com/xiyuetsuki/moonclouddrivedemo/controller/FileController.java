@@ -3,9 +3,14 @@ package com.xiyuetsuki.moonclouddrivedemo.controller;
 import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimit;
 import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimitDimension;
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkCompleteRequest;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkInitRequest;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkInitResponse;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.UploadProgress;
+import com.xiyuetsuki.moonclouddrivedemo.service.ChunkUploadService;
 import com.xiyuetsuki.moonclouddrivedemo.service.FileService;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +22,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +42,7 @@ public class FileController {
 
     private final FileService fileService;
     private final ProgressTracker progressTracker;
+    private final ChunkUploadService chunkUploadService;
 
     /**
      * 文件上传接口
@@ -63,8 +70,93 @@ public class FileController {
         }
     }
 
+    // ==================== 分片上传（大文件）接口 ====================
+
+    @Operation(summary = "初始化分片上传", description = "开始大文件分片上传，返回uploadId和分片信息，若文件哈希已存在则秒传")
+    @RateLimit(dimension = RateLimitDimension.USER, maxRequests = 10, windowSeconds = 60, message = "操作过于频繁，请稍后再试")
+    @PostMapping("/chunk/init")
+    public Response<ChunkInitResponse> initChunkUpload(@RequestBody ChunkInitRequest request) {
+        if (request.getFileName() == null || request.getFileName().isBlank()) {
+            return Response.bad(400, "文件名不能为空");
+        }
+        if (request.getFileSize() == null || request.getFileSize() <= 0) {
+            return Response.bad(400, "文件大小无效");
+        }
+        if (request.getFileHash() == null || request.getFileHash().isBlank()) {
+            return Response.bad(400, "文件哈希不能为空");
+        }
+        try {
+            ChunkInitResponse resp = chunkUploadService.initChunkUpload(
+                    request.getFileName(), request.getFileSize(),
+                    request.getFileHash(), request.getParentId());
+            String msg = resp.isInstantComplete() ? "秒传成功" : "分片上传已初始化";
+            return Response.ok(resp, msg);
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "上传分片", description = "上传单个分片，chunkIndex从0开始")
+    @RateLimit(dimension = RateLimitDimension.USER, maxRequests = 60, windowSeconds = 60, message = "上传过于频繁，请稍后再试")
+    @PostMapping("/chunk/upload")
+    public Response<Void> uploadChunk(
+            @Parameter(description = "分片数据") MultipartFile chunk,
+            @Parameter(description = "上传任务ID") @RequestParam String uploadId,
+            @Parameter(description = "分片序号，从0开始") @RequestParam int chunkIndex) {
+        if (chunk.isEmpty()) {
+            return Response.bad(400, "分片不能为空");
+        }
+        try {
+            chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk);
+            return Response.ok("分片上传成功");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "完成分片上传", description = "所有分片上传完毕后调用此接口合并文件")
+    @PostMapping("/chunk/complete")
+    public Response<FileVO> completeChunkUpload(@RequestBody ChunkCompleteRequest request) {
+        if (request.getUploadId() == null || request.getUploadId().isBlank()) {
+            return Response.bad(400, "uploadId不能为空");
+        }
+        try {
+            FileVO fileVO = chunkUploadService.completeChunkUpload(
+                    request.getUploadId(), request.getContentType());
+            return Response.ok(fileVO, "文件上传完成");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "查询分片上传进度", description = "查询分片上传进度，用于断点续传时判断哪些分片已上传")
+    @GetMapping("/chunk/progress")
+    public Response<ChunkProgressResponse> getChunkProgress(
+            @Parameter(description = "上传任务ID") @RequestParam String uploadId) {
+        try {
+            ChunkProgressResponse progress = chunkUploadService.getChunkProgress(uploadId);
+            return Response.ok(progress, "查询成功");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "取消分片上传", description = "取消分片上传并清理OSS中的碎片")
+    @DeleteMapping("/chunk/abort")
+    public Response<Void> abortChunkUpload(
+            @Parameter(description = "上传任务ID") @RequestParam String uploadId) {
+        try {
+            chunkUploadService.abortChunkUpload(uploadId);
+            return Response.ok("分片上传已取消");
+        } catch (RuntimeException e) {
+            return Response.bad(400, e.getMessage());
+        }
+    }
+
+    // ==================== 普通上传进度查询 ====================
+
     /**
-     * 查询上传进度接口
+     * 查询上传进度接口（小文件上传）
      * 前端轮询此接口获取文件上传的实时进度
      *
      * @param taskId 上传任务ID
