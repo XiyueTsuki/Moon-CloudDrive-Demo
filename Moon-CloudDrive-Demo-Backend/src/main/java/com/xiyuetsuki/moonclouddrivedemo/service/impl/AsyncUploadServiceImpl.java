@@ -31,6 +31,13 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
     @Async("uploadTaskExecutor")
     public void execute(String taskId, long userId, String originalFilename,
             byte[] fileBytes, long fileSize, String contentType, Long parentId) {
+
+        /*
+        计算文件SHA-256哈希值 -> 查询有无相同哈希值文件记录 ->
+        (秒传)保存文件记录 -> 更新上传进度
+        (异步上传)获取文件字节数组输入流 -> OSS上传，回调更新上传进度 -> 保存文件记录 -> 更新上传进度
+         */
+
         progressTracker.update(taskId, 10, "uploading", "文件读取完成");
 
         String fileHash = computeSha256(fileBytes);
