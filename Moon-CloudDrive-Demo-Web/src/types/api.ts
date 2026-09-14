@@ -95,3 +95,15 @@ export interface ShareInfoResponse {
 export interface VerifyCodeRequest {
   password: string
 }
+
+/** 分页查询结果 */
+export interface PageResult<T> {
+  /** 当前页数据列表 */
+  records: T[]
+  /** 总记录数 */
+  total: number
+  /** 当前页码 */
+  page: number
+  /** 每页条数 */
+  size: number
+}

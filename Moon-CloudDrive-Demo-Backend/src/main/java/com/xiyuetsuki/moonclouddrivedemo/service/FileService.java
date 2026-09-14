@@ -1,6 +1,7 @@
 package com.xiyuetsuki.moonclouddrivedemo.service;
 
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -23,12 +24,19 @@ public interface FileService {
     String uploadFile(MultipartFile file, Long parentId);
 
     /**
-     * 查询当前登录用户指定文件夹下的正常文件/文件夹列表（不含回收站）
+     * 分页查询当前登录用户指定文件夹下的正常文件/文件夹列表（不含回收站），
+     * 支持按名称搜索、按名称/大小/时间排序
      *
-     * @param parentId 父文件夹ID，NULL查询根目录
-     * @return 文件/文件夹信息列表
+     * @param parentId  父文件夹ID，NULL查询根目录
+     * @param page      页码（从1开始）
+     * @param size      每页条数
+     * @param sortBy    排序字段：name / size / uploadTime
+     * @param sortOrder 排序方向：asc / desc
+     * @param keyword   搜索关键词（匹配 original_filename），null 表示不搜索
+     * @return 分页结果
      */
-    List<FileVO> listFiles(Long parentId);
+    PageResult<FileVO> listFiles(Long parentId, int page, int size,
+                                 String sortBy, String sortOrder, String keyword);
 
     /**
      * 软删除指定文件或文件夹，将文件移入回收站（仅文件所有者可操作）。

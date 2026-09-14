@@ -4,6 +4,7 @@ import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimit;
 import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimitDimension;
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.UploadProgress;
 import com.xiyuetsuki.moonclouddrivedemo.service.FileService;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
@@ -73,17 +74,27 @@ public class FileController {
     }
 
     /**
-     * 文件列表查询接口
+     * 文件列表查询接口（分页 + 排序 + 搜索）
      * 返回当前登录用户指定文件夹下的文件和文件夹列表（不含回收站），
-     * 文件夹排在前，各自按上传时间倒序排列
+     * 文件夹始终排在前，其余按指定字段排序
      *
-     * @param parentId 父文件夹ID，不传则查询根目录
-     * @return 文件/文件夹信息列表
+     * @param parentId  父文件夹ID，不传则查询根目录
+     * @param page      页码（从1开始，默认1）
+     * @param size      每页条数（默认20）
+     * @param sortBy    排序字段：name / size / uploadTime（默认 uploadTime）
+     * @param sortOrder 排序方向：asc / desc（默认 desc）
+     * @param keyword   按文件名搜索（模糊匹配），不传则不搜索
+     * @return 分页结果
      */
     @GetMapping("/list")
-    public Response<List<FileVO>> listFiles(@RequestParam(required = false) Long parentId) {
-        List<FileVO> files = fileService.listFiles(parentId);
-        return Response.ok(files, "查询成功");
+    public Response<PageResult<FileVO>> listFiles(@RequestParam(required = false) Long parentId,
+                                                   @RequestParam(defaultValue = "1") int page,
+                                                   @RequestParam(defaultValue = "20") int size,
+                                                   @RequestParam(defaultValue = "uploadTime") String sortBy,
+                                                   @RequestParam(defaultValue = "desc") String sortOrder,
+                                                   @RequestParam(required = false) String keyword) {
+        PageResult<FileVO> result = fileService.listFiles(parentId, page, size, sortBy, sortOrder, keyword);
+        return Response.ok(result, "查询成功");
     }
 
     /**

@@ -2,6 +2,7 @@ package com.xiyuetsuki.moonclouddrivedemo.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.FileMapper;
 import com.xiyuetsuki.moonclouddrivedemo.service.AsyncUploadService;
@@ -74,13 +75,31 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public List<FileVO> listFiles(Long parentId) {
-        // 获取当前登录用户ID
+    public PageResult<FileVO> listFiles(Long parentId, int page, int size,
+                                        String sortBy, String sortOrder, String keyword) {
         long userId = StpUtil.getLoginIdAsLong();
-        // 查询指定文件夹下的文件/文件夹列表，文件夹排前，各自按上传时间倒序
-        List<File> files = fileMapper.selectByUserId(userId, parentId);
-        // 将实体转换为视图对象，隐藏敏感字段（如存储路径、OSS URL等）
-        return files.stream().map(this::toFileVO).collect(Collectors.toList());
+
+        // 白名单校验：排序字段映射为数据库列名，防止 SQL 注入
+        String sortColumn;
+        switch (sortBy) {
+            case "name":       sortColumn = "original_filename"; break;
+            case "size":       sortColumn = "file_size";         break;
+            case "uploadTime": sortColumn = "upload_time";       break;
+            default:           sortColumn = "upload_time";       break;
+        }
+
+        // 白名单校验：排序方向
+        String order = "desc".equalsIgnoreCase(sortOrder) ? "DESC" : "ASC";
+
+        // 搜索关键词去空白
+        String trimmedKeyword = (keyword != null && !keyword.isBlank()) ? keyword.trim() : null;
+
+        long total = fileMapper.countFiles(userId, parentId, trimmedKeyword);
+        int offset = (page - 1) * size;
+        List<File> files = fileMapper.selectPage(userId, parentId, trimmedKeyword, sortColumn, order, offset, size);
+        List<FileVO> records = files.stream().map(this::toFileVO).collect(Collectors.toList());
+
+        return new PageResult<>(records, total, page, size);
     }
 
     @Override

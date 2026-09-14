@@ -25,17 +25,51 @@ public interface FileMapper extends BaseMapper<File> {
     File selectByFileHash(@Param("fileHash") String fileHash);
 
     /**
-     * 查询指定用户指定文件夹下的所有正常文件/文件夹列表（排除回收站），
-     * 文件夹在前，文件在后，各自按上传时间倒序排列
+     * 统计指定用户在指定文件夹下的文件/文件夹数量，支持按文件名模糊搜索
      *
      * @param userId   用户ID
      * @param parentId 父文件夹ID，NULL 查询根目录
-     * @return 该目录下的文件和文件夹列表
+     * @param keyword  搜索关键词（模糊匹配 original_filename），null 表示不搜索
+     * @return 符合条件的记录总数
      */
-    @Select("SELECT * FROM tb_file WHERE user_id = #{userId} AND (deleted IS NULL OR deleted = 0) "
-            + "AND (parent_id = #{parentId} OR (#{parentId} IS NULL AND parent_id IS NULL)) "
-            + "ORDER BY is_folder DESC, upload_time DESC")
-    List<File> selectByUserId(@Param("userId") Long userId, @Param("parentId") Long parentId);
+    @Select("<script>"
+            + "SELECT COUNT(*) FROM tb_file"
+            + " WHERE user_id = #{userId} AND (deleted IS NULL OR deleted = 0)"
+            + " AND (parent_id = #{parentId} OR (#{parentId} IS NULL AND parent_id IS NULL))"
+            + "<if test='keyword != null and keyword != \"\"'>"
+            + " AND original_filename LIKE CONCAT('%', #{keyword}, '%')"
+            + "</if>"
+            + "</script>")
+    long countFiles(@Param("userId") Long userId, @Param("parentId") Long parentId,
+                    @Param("keyword") String keyword);
+
+    /**
+     * 分页查询指定用户在指定文件夹下的文件/文件夹列表，支持排序和搜索。
+     * sortColumn 和 sortOrder 由 Service 层白名单校验后传入，确保 SQL 安全
+     *
+     * @param userId     用户ID
+     * @param parentId   父文件夹ID，NULL 查询根目录
+     * @param keyword    搜索关键词，null 表示不搜索
+     * @param sortColumn 排序字段（数据库列名，已校验）
+     * @param sortOrder  排序方向（ASC / DESC，已校验）
+     * @param offset     偏移量
+     * @param size       每页条数
+     * @return 文件/文件夹列表
+     */
+    @Select("<script>"
+            + "SELECT * FROM tb_file"
+            + " WHERE user_id = #{userId} AND (deleted IS NULL OR deleted = 0)"
+            + " AND (parent_id = #{parentId} OR (#{parentId} IS NULL AND parent_id IS NULL))"
+            + "<if test='keyword != null and keyword != \"\"'>"
+            + " AND original_filename LIKE CONCAT('%', #{keyword}, '%')"
+            + "</if>"
+            + " ORDER BY is_folder DESC, ${sortColumn} ${sortOrder}"
+            + " LIMIT #{size} OFFSET #{offset}"
+            + "</script>")
+    List<File> selectPage(@Param("userId") Long userId, @Param("parentId") Long parentId,
+                          @Param("keyword") String keyword,
+                          @Param("sortColumn") String sortColumn, @Param("sortOrder") String sortOrder,
+                          @Param("offset") int offset, @Param("size") int size);
 
     /**
      * 查询指定用户的回收站文件列表，按删除时间倒序排列

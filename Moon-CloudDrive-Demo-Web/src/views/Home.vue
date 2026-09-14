@@ -11,7 +11,7 @@ import {
 } from '@/api/file'
 import { createShare } from '@/api/share'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight } from '@element-plus/icons-vue'
+import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search } from '@element-plus/icons-vue'
 import type { FileInfo } from '@/types/api'
 
 // ==================== 上传相关状态 ====================
@@ -31,6 +31,15 @@ const breadcrumbs = ref<{ id: number | null; name: string }[]>([{ id: null, name
 // ==================== 文件列表相关状态 ====================
 const fileList = ref<FileInfo[]>([])
 const fileListLoading = ref(false)
+// 分页
+const currentPage = ref(1)
+const pageSize = ref(20)
+const totalFiles = ref(0)
+// 排序
+const sortBy = ref('uploadTime')
+const sortOrder = ref<'asc' | 'desc'>('desc')
+// 搜索
+const searchKeyword = ref('')
 const renameDialogVisible = ref(false)
 const renamingFile = ref<FileInfo | null>(null)
 const renameNewName = ref('')
@@ -78,7 +87,7 @@ function startPolling(taskId: string) {
         uploading.value = false
         uploadDialogVisible.value = false
         selectedFile.value = null
-        loadFileList()
+        refreshFileList()
       } else if (progress.status === 'failed') {
         stopPolling()
         ElMessage.error('上传失败：' + progress.message)
@@ -124,13 +133,66 @@ async function handleUpload() {
 async function loadFileList() {
   fileListLoading.value = true
   try {
-    const res = await getFileList(currentParentId.value)
-    fileList.value = res.data.data
+    const res = await getFileList({
+      parentId: currentParentId.value,
+      page: currentPage.value,
+      size: pageSize.value,
+      sortBy: sortBy.value,
+      sortOrder: sortOrder.value,
+      keyword: searchKeyword.value || undefined,
+    })
+    const pageResult = res.data.data
+    fileList.value = pageResult.records
+    totalFiles.value = pageResult.total
   } catch {
     // 统一拦截处理
   } finally {
     fileListLoading.value = false
   }
+}
+
+/** 重置到第一页并刷新（创建/删除/重命名/移动等操作后使用） */
+function refreshFileList() {
+  currentPage.value = 1
+  loadFileList()
+}
+
+/** 排序变化 */
+function handleSortChange({ prop, order }: { prop: string; order: string | null }) {
+  if (order) {
+    sortBy.value = prop
+    sortOrder.value = order === 'ascending' ? 'asc' : 'desc'
+  } else {
+    sortBy.value = 'uploadTime'
+    sortOrder.value = 'desc'
+  }
+  currentPage.value = 1
+  loadFileList()
+}
+
+/** 分页大小变化 */
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadFileList()
+}
+
+/** 页码变化 */
+function handlePageChange(page: number) {
+  currentPage.value = page
+  loadFileList()
+}
+
+/** 搜索 */
+function handleSearch() {
+  currentPage.value = 1
+  loadFileList()
+}
+
+/** 按名称排序切换 */
+function sortOrderLabel(field: string): string {
+  if (sortBy.value !== field) return ''
+  return sortOrder.value === 'asc' ? ' ↑' : ' ↓'
 }
 
 async function loadBreadcrumbs() {
@@ -159,6 +221,8 @@ async function handleFolderClick(folder: FileInfo) {
 }
 
 watch(currentParentId, async () => {
+  currentPage.value = 1
+  searchKeyword.value = ''
   await Promise.all([loadBreadcrumbs(), loadFileList()])
 })
 
@@ -185,7 +249,7 @@ async function handleDelete(file: FileInfo) {
     })
     await deleteFile(file.id)
     ElMessage.success(`${title}已移入回收站`)
-    loadFileList()
+    refreshFileList()
   } catch {
     // 取消或不处理
   }
@@ -221,7 +285,7 @@ async function handleRename() {
     await renameFile(renamingFile.value.id, newName)
     ElMessage.success('重命名成功')
     renameDialogVisible.value = false
-    loadFileList()
+    refreshFileList()
     loadBreadcrumbs()
   } catch {
     // 统一拦截处理
@@ -244,7 +308,7 @@ async function handleCreateFolder() {
     await createFolder(newFolderName.value.trim(), currentParentId.value)
     ElMessage.success('文件夹创建成功')
     newFolderDialogVisible.value = false
-    loadFileList()
+    refreshFileList()
   } catch {
     // 统一拦截处理
   }
@@ -274,7 +338,7 @@ async function handleSubmitMove() {
     await moveFile(movingFile.value.id, moveTargetParentId.value)
     ElMessage.success('移动成功')
     moveDialogVisible.value = false
-    loadFileList()
+    refreshFileList()
     loadBreadcrumbs()
   } catch {
     // 统一拦截处理
@@ -347,7 +411,20 @@ onUnmounted(() => {
           <el-button type="primary" :icon="FolderAdd" @click="openNewFolderDialog">
             新建文件夹
           </el-button>
-          <el-button text type="primary" :icon="RefreshRight" @click="loadFileList" :loading="fileListLoading">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索文件名..."
+            clearable
+            style="width: 220px"
+            @keyup.enter="handleSearch"
+            @clear="handleSearch"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-button type="primary" plain @click="handleSearch">搜索</el-button>
+          <el-button text type="primary" :icon="RefreshRight" @click="refreshFileList" :loading="fileListLoading">
             刷新
           </el-button>
         </div>
@@ -359,8 +436,9 @@ onUnmounted(() => {
           empty-text="此文件夹为空"
           style="width: 100%"
           stripe
+          @sort-change="handleSortChange"
         >
-          <el-table-column label="名称" min-width="240">
+          <el-table-column label="名称" min-width="240" prop="name" sortable="custom">
             <template #default="{ row }">
               <div
                 :class="['name-cell', { 'is-folder': row.isFolder === 1 }]"
@@ -373,7 +451,7 @@ onUnmounted(() => {
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="大小" width="120" align="center">
+          <el-table-column label="大小" width="120" align="center" prop="size" sortable="custom">
             <template #default="{ row }">
               {{ row.isFolder === 1 ? '-' : formatFileSize(row.fileSize) }}
             </template>
@@ -385,7 +463,7 @@ onUnmounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="上传时间" width="180" align="center">
+          <el-table-column label="上传时间" width="180" align="center" prop="uploadTime" sortable="custom">
             <template #default="{ row }">
               {{ new Date(row.uploadTime).toLocaleString() }}
             </template>
@@ -402,6 +480,20 @@ onUnmounted(() => {
             </template>
           </el-table-column>
         </el-table>
+
+        <!-- 分页 -->
+        <div v-if="totalFiles > 0" class="pagination-bar">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="totalFiles"
+            layout="total, sizes, prev, pager, next, jumper"
+            background
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </el-card>
     </main>
 
@@ -562,7 +654,7 @@ onUnmounted(() => {
 
 .home-main {
   padding: 24px;
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -672,6 +764,12 @@ onUnmounted(() => {
 }
 
 /* ==================== 文件列表 ==================== */
+.pagination-bar {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
 .name-cell {
   display: flex;
   align-items: center;

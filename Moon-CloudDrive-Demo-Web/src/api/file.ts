@@ -3,7 +3,7 @@
  * 包含文件上传、进度查询、列表、下载、删除、重命名等功能
  */
 import http from './index'
-import type { ApiResponse, FileInfo, UploadProgress } from '@/types/api'
+import type { ApiResponse, FileInfo, UploadProgress, PageResult } from '@/types/api'
 
 /**
  * 上传文件
@@ -48,16 +48,24 @@ export function getProgress(taskId: string) {
 }
 
 /**
- * 获取指定文件夹下的文件/文件夹列表
- * 文件夹排在前，各自按上传时间倒序排列
+ * 分页查询指定文件夹下的文件/文件夹列表，支持排序和搜索。
  *
  * @param parentId 父文件夹ID，null或不传则查询根目录
- * @returns 文件/文件夹信息列表
+ * @param page      页码（从1开始，默认1）
+ * @param size      每页条数（默认20）
+ * @param sortBy    排序字段：name / size / uploadTime（默认 uploadTime）
+ * @param sortOrder 排序方向：asc / desc（默认 desc）
+ * @param keyword   按文件名搜索（可选）
  */
-export function getFileList(parentId?: number | null) {
-  return http.get<ApiResponse<FileInfo[]>>('/api/file/list', {
-    params: parentId != null ? { parentId } : {},
-  })
+export function getFileList(params: {
+  parentId?: number | null
+  page?: number
+  size?: number
+  sortBy?: string
+  sortOrder?: string
+  keyword?: string
+}) {
+  return http.get<ApiResponse<PageResult<FileInfo>>>('/api/file/list', { params })
 }
 
 /**
