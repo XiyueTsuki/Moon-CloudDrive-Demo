@@ -1,14 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
 import { getMyShares, cancelShare, createShare } from '@/api/share'
 import type { ShareInfo } from '@/types/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-
-const router = useRouter()
-const userStore = useUserStore()
 
 const shares = ref<ShareInfo[]>([])
 const loading = ref(false)
@@ -107,11 +102,6 @@ async function fetchShares() {
   }
 }
 
-function handleLogout() {
-  userStore.logout()
-  router.push('/login')
-}
-
 onMounted(() => {
   fetchShares()
 })
@@ -119,31 +109,6 @@ onMounted(() => {
 
 <template>
   <div class="share-container">
-    <header class="share-header">
-      <div class="header-left">
-        <h1>Moon 云盘</h1>
-      </div>
-      <div class="header-right">
-        <el-button text @click="router.push('/')">文件上传</el-button>
-        <el-dropdown>
-          <span class="user-info">
-            <el-avatar :size="32" icon="UserFilled" />
-            <span class="username">{{ userStore.username }}</span>
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item>
-                <span>{{ userStore.email }}</span>
-              </el-dropdown-item>
-              <el-dropdown-item divided @click="handleLogout">
-                <span style="color: #f56c6c">退出登录</span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </div>
-    </header>
-
     <main class="share-main">
       <div class="share-toolbar">
         <h2>我的分享</h2>
@@ -262,49 +227,12 @@ onMounted(() => {
 
 <style scoped>
 .share-container {
-  min-height: 100vh;
-  background: #f5f7fa;
-}
-
-.share-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  height: 60px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-}
-
-.header-left h1 {
-  font-size: 20px;
-  color: #303133;
-  margin: 0;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.username {
-  font-size: 14px;
-  color: #303133;
-}
-
-.share-main {
   padding: 24px;
-  max-width: 1200px;
+  max-width: 1000px;
   margin: 0 auto;
 }
+
+.share-main {}
 
 .share-toolbar {
   display: flex;

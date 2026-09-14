@@ -33,11 +33,25 @@ public class FileServiceImpl implements FileService {
     private final OssUtil ossUtil;
 
     @Override
-    public String uploadFile(MultipartFile file) {
+    public String uploadFile(MultipartFile file, Long parentId) {
+        /*
+        生成上传任务ID(UUID) -> 校验目标父文件夹是否合法 ->
+        Redis初始化上传进度 -> 文件内容转为字节数组 ->
+        提交给异步上传 -> 返回上传任务ID
+         */
+
         // 生成唯一任务ID，用于追踪上传进度
         String taskId = UUID.randomUUID().toString().replace("-", "");
         long userId = StpUtil.getLoginIdAsLong();
         String originalFilename = file.getOriginalFilename();
+
+        // 校验目标文件夹是否存在且合法
+        if (parentId != null) {
+            File parentFolder = fileMapper.selectByUserIdAndId(userId, parentId);
+            if (parentFolder == null || parentFolder.getIsFolder() == null || parentFolder.getIsFolder() != 1) {
+                throw new RuntimeException("目标文件夹不存在或不是有效文件夹");
+            }
+        }
 
         // 初始化进度为 0%
         progressTracker.update(taskId, 0, "uploading", "开始上传");
@@ -52,19 +66,19 @@ public class FileServiceImpl implements FileService {
             throw new RuntimeException("文件读取失败", e);
         }
 
-        // 提交异步上传任务
+        // 提交异步上传任务，传递 parentId 参数
         asyncUploadService.execute(taskId, userId, originalFilename,
-                fileBytes, file.getSize(), file.getContentType());
+                fileBytes, file.getSize(), file.getContentType(), parentId);
 
         return taskId;
     }
 
     @Override
-    public List<FileVO> listFiles() {
+    public List<FileVO> listFiles(Long parentId) {
         // 获取当前登录用户ID
         long userId = StpUtil.getLoginIdAsLong();
-        // 查询该用户的所有文件，按上传时间倒序排列
-        List<File> files = fileMapper.selectByUserId(userId);
+        // 查询指定文件夹下的文件/文件夹列表，文件夹排前，各自按上传时间倒序
+        List<File> files = fileMapper.selectByUserId(userId, parentId);
         // 将实体转换为视图对象，隐藏敏感字段（如存储路径、OSS URL等）
         return files.stream().map(this::toFileVO).collect(Collectors.toList());
     }
@@ -74,13 +88,30 @@ public class FileServiceImpl implements FileService {
         long userId = StpUtil.getLoginIdAsLong();
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
         if (file == null) {
-            throw new RuntimeException("文件不存在或无权操作");
+            throw new RuntimeException("文件或文件夹不存在或无权操作");
         }
-        // 软删除：设置删除标记和删除时间，文件进入回收站
-        file.setDeleted(1);
-        file.setDeleteTime(LocalDateTime.now());
-        fileMapper.updateById(file);
-        log.info("文件已移入回收站: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+
+        // 如果是文件夹，递归获取所有子孙节点一并软删除
+        if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+            List<File> descendants = fileMapper.selectAllDescendants(fileId);
+            LocalDateTime now = LocalDateTime.now();
+            int count = 0;
+            for (File f : descendants) {
+                f.setDeleted(1);
+                f.setDeleteTime(now);
+                fileMapper.updateById(f);
+                count++;
+            }
+            log.info("文件夹已移入回收站（含 {} 个条目）: userId={}, folderId={}, folderName={}",
+                    count, userId, fileId, file.getOriginalFilename());
+        } else {
+            // 普通文件：软删除，设置删除标记和删除时间，文件进入回收站
+            file.setDeleted(1);
+            file.setDeleteTime(LocalDateTime.now());
+            fileMapper.updateById(file);
+            log.info("文件已移入回收站: userId={}, fileId={}, filename={}",
+                    userId, fileId, file.getOriginalFilename());
+        }
     }
 
     @Override
@@ -136,11 +167,25 @@ public class FileServiceImpl implements FileService {
         if (file.getDeleted() == null || file.getDeleted() != 1) {
             throw new RuntimeException("该文件不在回收站中");
         }
-        // 清除删除标记和删除时间，文件恢复为正常状态
-        file.setDeleted(0);
-        file.setDeleteTime(null);
-        fileMapper.updateById(file);
-        log.info("文件已从回收站恢复: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+
+        // 如果是文件夹，递归恢复所有子孙节点
+        if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+            List<File> descendants = fileMapper.selectAllDescendants(fileId);
+            int count = 0;
+            for (File f : descendants) {
+                f.setDeleted(0);
+                f.setDeleteTime(null);
+                fileMapper.updateById(f);
+                count++;
+            }
+            log.info("文件夹已从回收站恢复（含 {} 个条目）: userId={}, folderId={}", count, userId, fileId);
+        } else {
+            // 普通文件恢复
+            file.setDeleted(0);
+            file.setDeleteTime(null);
+            fileMapper.updateById(file);
+            log.info("文件已从回收站恢复: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+        }
     }
 
     @Override
@@ -153,11 +198,26 @@ public class FileServiceImpl implements FileService {
         if (file.getDeleted() == null || file.getDeleted() != 1) {
             throw new RuntimeException("只能彻底删除回收站中的文件");
         }
-        // 物理删除数据库记录
-        fileMapper.deleteById(fileId);
-        // 同时从 OSS 中删除实际文件
-        ossUtil.deleteFile(file.getStoredFilename());
-        log.info("文件已彻底删除: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+
+        // 如果是文件夹，递归彻底删除所有子孙节点
+        if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+            List<File> descendants = fileMapper.selectAllDescendants(fileId);
+            int count = 0;
+            for (File f : descendants) {
+                // 只有普通文件才需要从 OSS 中删除实际文件
+                if (f.getIsFolder() == null || f.getIsFolder() != 1) {
+                    ossUtil.deleteFile(f.getStoredFilename());
+                }
+                fileMapper.deleteById(f.getId());
+                count++;
+            }
+            log.info("文件夹已彻底删除（含 {} 个条目）: userId={}, folderId={}", count, userId, fileId);
+        } else {
+            // 普通文件：物理删除数据库记录 + OSS 删除
+            fileMapper.deleteById(fileId);
+            ossUtil.deleteFile(file.getStoredFilename());
+            log.info("文件已彻底删除: userId={}, fileId={}, filename={}", userId, fileId, file.getOriginalFilename());
+        }
     }
 
     @Override
@@ -171,10 +231,11 @@ public class FileServiceImpl implements FileService {
         log.info("回收站定时清理：开始清理 {} 个过期文件", expiredFiles.size());
         for (File file : expiredFiles) {
             try {
-                // 物理删除数据库记录
+                // 文件夹只删记录，普通文件还需从 OSS 删除实际文件
+                if (file.getIsFolder() == null || file.getIsFolder() != 1) {
+                    ossUtil.deleteFile(file.getStoredFilename());
+                }
                 fileMapper.deleteById(file.getId());
-                // 从 OSS 中删除实际文件
-                ossUtil.deleteFile(file.getStoredFilename());
                 log.info("回收站定时清理成功: fileId={}, filename={}", file.getId(), file.getOriginalFilename());
             } catch (Exception e) {
                 // 单个文件清理失败不影响后续文件的清理
@@ -182,6 +243,109 @@ public class FileServiceImpl implements FileService {
             }
         }
         log.info("回收站定时清理：完成，成功清理 {} 个文件", expiredFiles.size());
+    }
+
+    // ==================== 文件夹功能 ====================
+
+    @Override
+    public FileVO createFolder(String folderName, Long parentId) {
+        long userId = StpUtil.getLoginIdAsLong();
+
+        // 校验文件夹名称
+        if (folderName == null || folderName.trim().isEmpty()) {
+            throw new RuntimeException("文件夹名称不能为空");
+        }
+        folderName = folderName.trim();
+
+        // 校验同一父目录下不能有同名文件夹
+        int count = fileMapper.countByNameAndParent(userId, parentId, folderName);
+        if (count > 0) {
+            throw new RuntimeException("该目录下已存在同名文件或文件夹");
+        }
+
+        // 如果指定了父文件夹，校验父文件夹存在且合法
+        if (parentId != null) {
+            File parentFolder = fileMapper.selectByUserIdAndId(userId, parentId);
+            if (parentFolder == null || parentFolder.getIsFolder() == null || parentFolder.getIsFolder() != 1) {
+                throw new RuntimeException("父文件夹不存在或不是有效文件夹");
+            }
+        }
+
+        // 构建文件夹实体
+        File folder = new File();
+        folder.setOriginalFilename(folderName);
+        folder.setParentId(parentId);
+        folder.setUserId(userId);
+        folder.setIsFolder(1);
+        folder.setFileSize(0L);
+        folder.setFileHash("");
+        folder.setStoredFilename("");
+        folder.setOssUrl("");
+        folder.setUploadTime(LocalDateTime.now());
+        folder.setDeleted(0);
+        fileMapper.insert(folder);
+
+        log.info("文件夹创建成功: userId={}, folderName={}, parentId={}", userId, folderName, parentId);
+        return toFileVO(folder);
+    }
+
+    @Override
+    public void moveFile(Long fileId, Long targetParentId) {
+        long userId = StpUtil.getLoginIdAsLong();
+        File file = fileMapper.selectByUserIdAndId(userId, fileId);
+        if (file == null) {
+            throw new RuntimeException("文件或文件夹不存在或无权操作");
+        }
+
+        // 不能移动到自身
+        if (targetParentId != null && targetParentId.equals(fileId)) {
+            throw new RuntimeException("不能将文件夹移动到自身");
+        }
+
+        // 如果文件是文件夹，不能移动到其子孙文件夹中（防止循环引用）
+        if (file.getIsFolder() != null && file.getIsFolder() == 1 && targetParentId != null) {
+            List<File> descendants = fileMapper.selectAllDescendants(fileId);
+            for (File descendant : descendants) {
+                if (descendant.getId().equals(targetParentId)) {
+                    throw new RuntimeException("不能将文件夹移动到其子文件夹中");
+                }
+            }
+        }
+
+        // 校验目标文件夹存在且合法
+        if (targetParentId != null) {
+            File targetFolder = fileMapper.selectByUserIdAndId(userId, targetParentId);
+            if (targetFolder == null || targetFolder.getIsFolder() == null || targetFolder.getIsFolder() != 1) {
+                throw new RuntimeException("目标文件夹不存在或不是有效文件夹");
+            }
+        }
+
+        // 校验目标目录下没有同名文件/文件夹
+        int count = fileMapper.countByNameAndParent(userId, targetParentId, file.getOriginalFilename());
+        if (count > 0) {
+            throw new RuntimeException("目标目录下已存在同名文件或文件夹");
+        }
+
+        fileMapper.updateParentId(fileId, targetParentId);
+        log.info("移动成功: userId={}, fileId={}, targetParentId={}", userId, fileId, targetParentId);
+    }
+
+    @Override
+    public List<FileVO> getFolderPath(Long folderId) {
+        if (folderId == null) {
+            return List.of();
+        }
+        List<File> path = fileMapper.selectFolderPath(folderId);
+        // 使用递归 CTE 查询结果（depth 字段不在 File 实体中），直接手动构建 FileVO 列表
+        return path.stream()
+                .map(f -> {
+                    FileVO vo = new FileVO();
+                    vo.setId(f.getId());
+                    vo.setOriginalFilename(f.getOriginalFilename());
+                    vo.setIsFolder(1);
+                    return vo;
+                })
+                .collect(Collectors.toList());
     }
 
     /**
@@ -200,6 +364,8 @@ public class FileServiceImpl implements FileService {
         vo.setUploadTime(file.getUploadTime());
         vo.setDeleted(file.getDeleted());
         vo.setDeleteTime(file.getDeleteTime());
+        vo.setParentId(file.getParentId());
+        vo.setIsFolder(file.getIsFolder());
         return vo;
     }
 }

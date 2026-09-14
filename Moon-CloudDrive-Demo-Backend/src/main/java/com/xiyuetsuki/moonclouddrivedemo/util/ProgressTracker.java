@@ -22,6 +22,10 @@ public class ProgressTracker {
     private final ObjectMapper objectMapper;
 
     public void update(String taskId, int percent, String status, String message) {
+        /*
+        创建上传信息实体 -> Jackson将上传信息实体序列化成JSON -> JSON存入Redis
+         */
+
         UploadProgress progress = new UploadProgress(percent, status, message);
         try {
             String json = objectMapper.writeValueAsString(progress);

@@ -52,6 +52,10 @@ export interface FileInfo {
   deleted: number
   /** 进入回收站的时间 */
   deleteTime: string
+  /** 父文件夹ID，null表示根目录 */
+  parentId: number | null
+  /** 是否为文件夹：0-文件，1-文件夹 */
+  isFolder: number
 }
 
 export interface UploadProgress {

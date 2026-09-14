@@ -5,6 +5,7 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
@@ -24,13 +25,17 @@ public interface FileMapper extends BaseMapper<File> {
     File selectByFileHash(@Param("fileHash") String fileHash);
 
     /**
-     * 查询指定用户的所有正常文件列表（排除回收站中的文件），按上传时间倒序排列
+     * 查询指定用户指定文件夹下的所有正常文件/文件夹列表（排除回收站），
+     * 文件夹在前，文件在后，各自按上传时间倒序排列
      *
-     * @param userId 用户ID
-     * @return 该用户的文件列表
+     * @param userId   用户ID
+     * @param parentId 父文件夹ID，NULL 查询根目录
+     * @return 该目录下的文件和文件夹列表
      */
-    @Select("SELECT * FROM tb_file WHERE user_id = #{userId} AND (deleted IS NULL OR deleted = 0) ORDER BY upload_time DESC")
-    List<File> selectByUserId(@Param("userId") Long userId);
+    @Select("SELECT * FROM tb_file WHERE user_id = #{userId} AND (deleted IS NULL OR deleted = 0) "
+            + "AND (parent_id = #{parentId} OR (#{parentId} IS NULL AND parent_id IS NULL)) "
+            + "ORDER BY is_folder DESC, upload_time DESC")
+    List<File> selectByUserId(@Param("userId") Long userId, @Param("parentId") Long parentId);
 
     /**
      * 查询指定用户的回收站文件列表，按删除时间倒序排列
@@ -59,4 +64,58 @@ public interface FileMapper extends BaseMapper<File> {
      */
     @Select("SELECT * FROM tb_file WHERE user_id = #{userId} AND id = #{fileId} LIMIT 1")
     File selectByUserIdAndId(@Param("userId") Long userId, @Param("fileId") Long fileId);
+
+    /**
+     * 递归查询指定文件夹 ID 的所有子孙节点（包括文件和子文件夹），
+     * 使用 MySQL 8 递归 CTE 实现，用于删除/移动文件夹时获取所有受影响条目
+     *
+     * @param folderId 文件夹ID
+     * @return 该文件夹及其下的所有子孙节点
+     */
+    @Select("WITH RECURSIVE cte AS ("
+            + "  SELECT id FROM tb_file WHERE id = #{folderId} "
+            + "  UNION ALL "
+            + "  SELECT f.id FROM tb_file f INNER JOIN cte ON f.parent_id = cte.id"
+            + ") SELECT * FROM tb_file WHERE id IN (SELECT id FROM cte)")
+    List<File> selectAllDescendants(@Param("folderId") Long folderId);
+
+    /**
+     * 查询从根目录到指定文件夹的完整路径链（面包屑导航），
+     * 使用 MySQL 8 递归 CTE 从当前节点向上追溯到根
+     *
+     * @param folderId 文件夹ID
+     * @return 从根到该文件夹的路径列表（按深度升序，根在前）
+     */
+    @Select("WITH RECURSIVE cte AS ("
+            + "  SELECT id, original_filename, parent_id, 0 AS depth FROM tb_file WHERE id = #{folderId} "
+            + "  UNION ALL "
+            + "  SELECT f.id, f.original_filename, f.parent_id, cte.depth - 1 FROM tb_file f "
+            + "  INNER JOIN cte ON f.id = cte.parent_id"
+            + ") SELECT id, original_filename, parent_id FROM cte ORDER BY depth ASC")
+    List<File> selectFolderPath(@Param("folderId") Long folderId);
+
+    /**
+     * 查询指定用户名下、指定父文件夹下同名的文件/文件夹数量，用于重名校验
+     *
+     * @param userId   用户ID
+     * @param parentId 父文件夹ID
+     * @param filename 文件/文件夹名
+     * @return 同名数量
+     */
+    @Select("SELECT COUNT(*) FROM tb_file WHERE user_id = #{userId} AND (deleted IS NULL OR deleted = 0) "
+            + "AND (parent_id = #{parentId} OR (#{parentId} IS NULL AND parent_id IS NULL)) "
+            + "AND original_filename = #{filename}")
+    int countByNameAndParent(@Param("userId") Long userId, @Param("parentId") Long parentId,
+                             @Param("filename") String filename);
+
+    /**
+     * 更新文件/文件夹的父文件夹ID，用于移动操作。
+     * 必须用显式 SQL 而非 MyBatis-Plus 的 updateById，
+     * 因为后者默认策略 NOT_NULL 会跳过 null 值（移回根目录时 parent_id 应为 NULL）
+     *
+     * @param fileId   文件/文件夹ID
+     * @param parentId 目标父文件夹ID，可为 null 表示根目录
+     */
+    @Update("UPDATE tb_file SET parent_id = #{parentId} WHERE id = #{fileId}")
+    int updateParentId(@Param("fileId") Long fileId, @Param("parentId") Long parentId);
 }

@@ -16,22 +16,25 @@ public interface FileService {
     /**
      * 上传文件，返回异步任务ID用于进度查询
      *
-     * @param file 上传的文件
+     * @param file     上传的文件
+     * @param parentId 父文件夹ID，NULL表示上传到根目录
      * @return 异步任务ID
      */
-    String uploadFile(MultipartFile file);
+    String uploadFile(MultipartFile file, Long parentId);
 
     /**
-     * 查询当前登录用户的正常文件列表（不含回收站）
+     * 查询当前登录用户指定文件夹下的正常文件/文件夹列表（不含回收站）
      *
-     * @return 文件信息列表
+     * @param parentId 父文件夹ID，NULL查询根目录
+     * @return 文件/文件夹信息列表
      */
-    List<FileVO> listFiles();
+    List<FileVO> listFiles(Long parentId);
 
     /**
-     * 软删除指定文件，将文件移入回收站（仅文件所有者可操作）
+     * 软删除指定文件或文件夹，将文件移入回收站（仅文件所有者可操作）。
+     * 文件夹删除会递归删除目录下所有子孙文件/文件夹
      *
-     * @param fileId 文件ID
+     * @param fileId 文件/文件夹ID
      */
     void deleteFile(Long fileId);
 
@@ -76,4 +79,30 @@ public interface FileService {
      * 定时清理：彻底删除回收站中超过 {@link #RECYCLE_RETENTION_DAYS} 天的文件
      */
     void cleanupExpiredRecycleBinFiles();
+
+    /**
+     * 创建新文件夹
+     *
+     * @param folderName 文件夹名称
+     * @param parentId   父文件夹ID，NULL表示根目录
+     * @return 创建的文件夹信息
+     */
+    FileVO createFolder(String folderName, Long parentId);
+
+    /**
+     * 移动文件或文件夹到指定目录。
+     * 后端正将校验不能将文件夹移动到自身或其子孙文件夹中
+     *
+     * @param fileId         要移动的文件/文件夹ID
+     * @param targetParentId 目标父文件夹ID，NULL表示根目录
+     */
+    void moveFile(Long fileId, Long targetParentId);
+
+    /**
+     * 获取从根目录到指定文件夹的完整路径（面包屑导航）
+     *
+     * @param folderId 文件夹ID，NULL返回空列表
+     * @return 从根到该文件夹的路径列表，根在前
+     */
+    List<FileVO> getFolderPath(Long folderId);
 }

@@ -10,12 +10,16 @@ import type { ApiResponse, FileInfo, UploadProgress } from '@/types/api'
  * 将文件以 multipart/form-data 格式提交到后端，支持上传进度回调
  *
  * @param file       要上传的文件对象
+ * @param parentId   父文件夹ID，null表示上传到根目录
  * @param onProgress 上传进度回调（可选），参数为 0-100 的百分比
  * @returns 返回包含任务ID的响应
  */
-export function uploadFile(file: File, onProgress?: (percent: number) => void) {
+export function uploadFile(file: File, parentId?: number | null, onProgress?: (percent: number) => void) {
   const formData = new FormData()
   formData.append('file', file)
+  if (parentId != null) {
+    formData.append('parentId', String(parentId))
+  }
 
   return http.post<ApiResponse<string>>('/api/file/upload', formData, {
     headers: {
@@ -44,13 +48,16 @@ export function getProgress(taskId: string) {
 }
 
 /**
- * 获取当前登录用户的文件列表
- * 返回按上传时间倒序排列的文件信息
+ * 获取指定文件夹下的文件/文件夹列表
+ * 文件夹排在前，各自按上传时间倒序排列
  *
- * @returns 文件信息列表
+ * @param parentId 父文件夹ID，null或不传则查询根目录
+ * @returns 文件/文件夹信息列表
  */
-export function getFileList() {
-  return http.get<ApiResponse<FileInfo[]>>('/api/file/list')
+export function getFileList(parentId?: number | null) {
+  return http.get<ApiResponse<FileInfo[]>>('/api/file/list', {
+    params: parentId != null ? { parentId } : {},
+  })
 }
 
 /**
@@ -116,13 +123,57 @@ export function restoreFile(fileId: number) {
 }
 
 /**
- * 彻底删除回收站中的文件
+ * 彻底删除回收站中的文件/文件夹
  * 物理删除数据库记录并从OSS中删除实际文件，不可恢复
  *
- * @param fileId 文件ID
+ * @param fileId 文件/文件夹ID
  */
 export function permanentDeleteFile(fileId: number) {
   return http.delete<ApiResponse<null>>('/api/file/recycle-bin/permanent-delete', {
     params: { fileId },
+  })
+}
+
+// ==================== 文件夹相关 API ====================
+
+/**
+ * 创建新文件夹
+ *
+ * @param folderName 文件夹名称
+ * @param parentId   父文件夹ID，null或不传则创建在根目录
+ */
+export function createFolder(folderName: string, parentId?: number | null) {
+  return http.post<ApiResponse<FileInfo>>('/api/file/folder/create', null, {
+    params: {
+      folderName,
+      ...(parentId != null ? { parentId: String(parentId) } : {}),
+    },
+  })
+}
+
+/**
+ * 移动文件或文件夹到目标目录
+ *
+ * @param fileId         要移动的文件/文件夹ID
+ * @param targetParentId 目标父文件夹ID，null或不传则移动到根目录
+ */
+export function moveFile(fileId: number, targetParentId?: number | null) {
+  return http.put<ApiResponse<null>>('/api/file/folder/move', null, {
+    params: {
+      fileId,
+      ...(targetParentId != null ? { targetParentId: String(targetParentId) } : {}),
+    },
+  })
+}
+
+/**
+ * 获取文件夹路径（面包屑导航）
+ * 返回从根目录到指定文件夹的完整路径链
+ *
+ * @param folderId 文件夹ID，null或不传返回空列表
+ */
+export function getFolderPath(folderId?: number | null) {
+  return http.get<ApiResponse<FileInfo[]>>('/api/file/folder/path', {
+    params: folderId != null ? { folderId } : {},
   })
 }

@@ -14,27 +14,32 @@ const router = createRouter({
       component: () => import('@/views/Register.vue'),
     },
     {
-      path: '/',
-      name: 'Home',
-      component: () => import('@/views/Home.vue'),
-      meta: { requiresAuth: true },
-    },
-    {
-      path: '/shares',
-      name: 'ShareManage',
-      component: () => import('@/views/ShareManage.vue'),
-      meta: { requiresAuth: true },
-    },
-    {
-      path: '/recycle-bin',
-      name: 'RecycleBin',
-      component: () => import('@/views/RecycleBin.vue'),
-      meta: { requiresAuth: true },
-    },
-    {
       path: '/share/:shareCode',
       name: 'ShareAccess',
       component: () => import('@/views/ShareAccess.vue'),
+    },
+    // ------ 认证后可访问的页面（共享导航栏） ------
+    {
+      path: '/',
+      component: () => import('@/layouts/MainLayout.vue'),
+      meta: { requiresAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'Home',
+          component: () => import('@/views/Home.vue'),
+        },
+        {
+          path: 'shares',
+          name: 'ShareManage',
+          component: () => import('@/views/ShareManage.vue'),
+        },
+        {
+          path: 'recycle-bin',
+          name: 'RecycleBin',
+          component: () => import('@/views/RecycleBin.vue'),
+        },
+      ],
     },
   ],
 })

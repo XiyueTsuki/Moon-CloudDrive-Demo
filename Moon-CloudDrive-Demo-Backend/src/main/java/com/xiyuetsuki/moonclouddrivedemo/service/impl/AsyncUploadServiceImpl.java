@@ -30,7 +30,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
     @Override
     @Async("uploadTaskExecutor")
     public void execute(String taskId, long userId, String originalFilename,
-            byte[] fileBytes, long fileSize, String contentType) {
+            byte[] fileBytes, long fileSize, String contentType, Long parentId) {
         progressTracker.update(taskId, 10, "uploading", "文件读取完成");
 
         String fileHash = computeSha256(fileBytes);
@@ -39,7 +39,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
         File existingFile = fileMapper.selectByFileHash(fileHash);
         if (existingFile != null) {
             saveFileRecord(originalFilename, existingFile.getStoredFilename(),
-                    fileSize, contentType, fileHash, userId, existingFile.getOssUrl());
+                    fileSize, contentType, fileHash, userId, existingFile.getOssUrl(), parentId);
             progressTracker.update(taskId, 100, "done", "秒传成功");
             log.info("文件秒传成功(复用已有文件): {} -> {}", originalFilename, existingFile.getOssUrl());
             return;
@@ -58,7 +58,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
 
             String ossUrl = ossUtil.getOssUrl(storedFilename);
             saveFileRecord(originalFilename, storedFilename, fileSize,
-                    contentType, fileHash, userId, ossUrl);
+                    contentType, fileHash, userId, ossUrl, parentId);
 
             progressTracker.update(taskId, 100, "done", "上传成功");
             log.info("文件上传成功: {} -> {}", originalFilename, ossUrl);
@@ -70,7 +70,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
 
     private void saveFileRecord(String originalFilename, String storedFilename,
             long fileSize, String contentType, String fileHash,
-            long userId, String ossUrl) {
+            long userId, String ossUrl, Long parentId) {
         File fileRecord = new File();
         fileRecord.setOriginalFilename(originalFilename);
         fileRecord.setStoredFilename(storedFilename);
@@ -80,6 +80,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
         fileRecord.setUserId(userId);
         fileRecord.setOssUrl(ossUrl);
         fileRecord.setUploadTime(LocalDateTime.now());
+        fileRecord.setParentId(parentId);
         fileMapper.insert(fileRecord);
     }
 

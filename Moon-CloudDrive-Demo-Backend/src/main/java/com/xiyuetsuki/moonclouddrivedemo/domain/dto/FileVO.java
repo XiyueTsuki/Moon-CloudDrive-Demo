@@ -33,4 +33,10 @@ public class FileVO {
 
     /** 进入回收站的时间 */
     private LocalDateTime deleteTime;
+
+    /** 父文件夹ID，NULL表示根目录 */
+    private Long parentId;
+
+    /** 是否为文件夹：0-文件，1-文件夹 */
+    private Integer isFolder;
 }

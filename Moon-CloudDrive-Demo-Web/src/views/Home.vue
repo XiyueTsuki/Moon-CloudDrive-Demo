@@ -1,88 +1,61 @@
 <script setup lang="ts">
 /**
  * 首页组件
- * 提供文件上传、文件列表展示、下载、删除、重命名等核心功能
+ * 提供文件管理核心功能：上传、文件夹管理、下载、删除、重命名、分享、移动
+ * 支持文件夹层级导航（面包屑），区分文件和文件夹的不同操作
  */
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import { uploadFile, getProgress, getFileList, getDownloadUrl, deleteFile, renameFile } from '@/api/file'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import {
+  uploadFile, getProgress, getFileList, getDownloadUrl,
+  deleteFile, renameFile, createFolder, moveFile, getFolderPath,
+} from '@/api/file'
 import { createShare } from '@/api/share'
-import { changePassword } from '@/api/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Download, Delete, Edit, Share } from '@element-plus/icons-vue'
+import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight } from '@element-plus/icons-vue'
 import type { FileInfo } from '@/types/api'
 
-const router = useRouter()
-const userStore = useUserStore()
-
 // ==================== 上传相关状态 ====================
-/** 是否正在上传 */
 const uploading = ref(false)
-/** 上传进度百分比 */
 const uploadPercent = ref(0)
-/** 上传状态：uploading | done | failed */
 const uploadStatus = ref('')
-/** 上传进度消息 */
 const uploadMessage = ref('')
-/** 当前上传任务ID */
 const currentTaskId = ref('')
-/** 用户选择的文件 */
 const selectedFile = ref<File | null>(null)
-/** 轮询定时器 */
+const uploadDialogVisible = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+// ==================== 导航相关状态 ====================
+const currentParentId = ref<number | null>(null)
+const breadcrumbs = ref<{ id: number | null; name: string }[]>([{ id: null, name: '根目录' }])
+
 // ==================== 文件列表相关状态 ====================
-/** 文件列表数据 */
 const fileList = ref<FileInfo[]>([])
-/** 文件列表是否正在加载 */
 const fileListLoading = ref(false)
-/** 重命名对话框是否可见 */
 const renameDialogVisible = ref(false)
-/** 当前正在重命名的文件 */
 const renamingFile = ref<FileInfo | null>(null)
-/** 重命名输入框的新文件名 */
 const renameNewName = ref('')
 
-// ==================== 分享弹窗相关状态 ====================
-/** 分享创建对话框是否可见 */
-const shareDialogVisible = ref(false)
-/** 分享弹窗：文件ID */
-const shareFileId = ref(0)
-/** 分享弹窗：提取码 */
-const sharePassword = ref('')
-/** 分享弹窗：有效时长（小时），默认 24 小时 */
-const shareExpireHours = ref(24)
-/** 分享弹窗：最大下载次数，0 表示不限制 */
-const shareMaxDownloads = ref(0)
+// ==================== 文件夹弹窗状态 ====================
+const newFolderDialogVisible = ref(false)
+const newFolderName = ref('')
+const moveDialogVisible = ref(false)
+const movingFile = ref<FileInfo | null>(null)
+const moveTargetParentId = ref<number | null>(null)
+const folderList = ref<FileInfo[]>([])
 
-// ==================== 修改密码弹窗相关状态 ====================
-/** 修改密码对话框是否可见 */
-const passwordDialogVisible = ref(false)
-/** 修改密码：旧密码 */
-const oldPassword = ref('')
-/** 修改密码：新密码 */
-const newPassword = ref('')
-/** 修改密码：确认新密码 */
-const confirmPassword = ref('')
-/** 修改密码：是否正在提交 */
-const passwordLoading = ref(false)
+// ==================== 分享弹窗相关状态 ====================
+const shareDialogVisible = ref(false)
+const shareFileId = ref(0)
+const sharePassword = ref('')
+const shareExpireHours = ref(24)
+const shareMaxDownloads = ref(0)
 
 // ==================== 上传功能 ====================
 
-/**
- * 处理文件选择变化
- * @param file 用户选择的文件对象
- */
 function handleFileChange(file: File) {
   selectedFile.value = file
 }
 
-/**
- * 格式化文件大小显示
- * @param bytes 文件字节数
- * @returns 格式化后的文件大小字符串，如 "1.5 MB"
- */
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -91,11 +64,6 @@ function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
-/**
- * 开始轮询上传进度
- * 每秒查询一次进度，直到上传完成或失败
- * @param taskId 上传任务ID
- */
 function startPolling(taskId: string) {
   pollTimer = setInterval(async () => {
     try {
@@ -106,40 +74,23 @@ function startPolling(taskId: string) {
       uploadMessage.value = progress.message
 
       if (progress.status === 'done') {
-        // 上传完成，停止轮询并刷新文件列表
         stopPolling()
-        ElMessage.success('文件上传完成！')
         uploading.value = false
-        loadFileList() // 刷新文件列表
-
-        ElMessageBox.confirm(
-          '文件上传成功！是否为此文件创建分享链接？',
-          '上传完成',
-          {
-            confirmButtonText: '创建分享',
-            cancelButtonText: '暂不创建',
-            type: 'success',
-          },
-        ).then(() => {
-          showCreateShareDialog(taskId)
-        }).catch(() => {
-          // 暂不创建，不做任何操作
-        })
+        uploadDialogVisible.value = false
+        selectedFile.value = null
+        loadFileList()
       } else if (progress.status === 'failed') {
-        // 上传失败，停止轮询
         stopPolling()
         ElMessage.error('上传失败：' + progress.message)
         uploading.value = false
       }
     } catch {
-      // 接口异常时停止轮询，避免无限请求
       stopPolling()
       uploading.value = false
     }
   }, 1000)
 }
 
-/** 停止轮询上传进度 */
 function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer)
@@ -147,7 +98,6 @@ function stopPolling() {
   }
 }
 
-/** 处理上传按钮点击 */
 async function handleUpload() {
   if (!selectedFile.value) {
     ElMessage.warning('请先选择文件')
@@ -160,10 +110,9 @@ async function handleUpload() {
   uploadMessage.value = '正在上传...'
 
   try {
-    const res = await uploadFile(selectedFile.value)
+    const res = await uploadFile(selectedFile.value, currentParentId.value)
     const taskId = res.data.data
     currentTaskId.value = taskId
-    ElMessage.success('上传任务已提交，正在处理...')
     startPolling(taskId)
   } catch {
     uploading.value = false
@@ -172,111 +121,168 @@ async function handleUpload() {
 
 // ==================== 文件列表功能 ====================
 
-/** 加载文件列表 */
 async function loadFileList() {
   fileListLoading.value = true
   try {
-    const res = await getFileList()
+    const res = await getFileList(currentParentId.value)
     fileList.value = res.data.data
   } catch {
-    // 错误已在拦截器中统一处理
+    // 统一拦截处理
   } finally {
     fileListLoading.value = false
   }
 }
 
-/**
- * 处理文件下载
- * 获取预签名URL后在新窗口打开下载
- * @param file 要下载的文件信息
- */
+async function loadBreadcrumbs() {
+  if (currentParentId.value == null) {
+    breadcrumbs.value = [{ id: null, name: '根目录' }]
+    return
+  }
+  try {
+    const res = await getFolderPath(currentParentId.value)
+    const path = res.data.data || []
+    breadcrumbs.value = [
+      { id: null, name: '根目录' },
+      ...path.map((f: FileInfo) => ({ id: f.id, name: f.originalFilename })),
+    ]
+  } catch {
+    breadcrumbs.value = [{ id: null, name: '根目录' }]
+  }
+}
+
+function navigateTo(folderId: number | null) {
+  currentParentId.value = folderId
+}
+
+async function handleFolderClick(folder: FileInfo) {
+  currentParentId.value = folder.id
+}
+
+watch(currentParentId, async () => {
+  await Promise.all([loadBreadcrumbs(), loadFileList()])
+})
+
 async function handleDownload(file: FileInfo) {
   try {
     const res = await getDownloadUrl(file.id)
-    const downloadUrl = res.data.data
-    // 在新窗口打开下载链接，触发浏览器下载
-    window.open(downloadUrl, '_blank')
+    window.open(res.data.data, '_blank')
   } catch {
-    // 错误已在拦截器中统一处理
+    // 统一拦截处理
   }
 }
 
-/**
- * 处理文件删除
- * 弹出确认框后执行删除操作
- * @param file 要删除的文件信息
- */
 async function handleDelete(file: FileInfo) {
+  const title = file.isFolder === 1 ? '文件夹' : '文件'
+  const confirmMsg = file.isFolder === 1
+    ? `确定要删除文件夹「${file.originalFilename}」吗？其中的所有文件和子文件夹将一并移入回收站。`
+    : `确定要删除文件「${file.originalFilename}」吗？删除后文件将移入回收站，30天后自动彻底清除。`
+
   try {
-    await ElMessageBox.confirm(
-      `确定要删除文件 "${file.originalFilename}" 吗？删除后文件将移入回收站，30天后自动彻底清除。`,
-      '确认删除',
-      {
-        confirmButtonText: '删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-      },
-    )
+    await ElMessageBox.confirm(confirmMsg, `确认删除${title}`, {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
     await deleteFile(file.id)
-    ElMessage.success('文件已移入回收站')
-    loadFileList() // 删除后刷新列表
+    ElMessage.success(`${title}已移入回收站`)
+    loadFileList()
   } catch {
-    // 用户取消删除或删除失败
+    // 取消或不处理
   }
 }
 
-/**
- * 打开重命名对话框
- * 将当前文件名预填到输入框中
- * @param file 要重命名的文件信息
- */
 function openRenameDialog(file: FileInfo) {
   renamingFile.value = file
-  // 获取文件名（不含扩展名）作为默认输入值
-  const lastDot = file.originalFilename.lastIndexOf('.')
-  if (lastDot > 0) {
-    renameNewName.value = file.originalFilename.substring(0, lastDot)
-  } else {
+  if (file.isFolder === 1) {
     renameNewName.value = file.originalFilename
+  } else {
+    const lastDot = file.originalFilename.lastIndexOf('.')
+    renameNewName.value = lastDot > 0 ? file.originalFilename.substring(0, lastDot) : file.originalFilename
   }
   renameDialogVisible.value = true
 }
 
-/**
- * 处理文件重命名
- * 调用后端接口更新文件名
- */
 async function handleRename() {
   if (!renamingFile.value || !renameNewName.value.trim()) {
-    ElMessage.warning('文件名不能为空')
+    ElMessage.warning('名称不能为空')
     return
   }
 
   try {
-    // 构建新文件名：保留原始扩展名
-    const originalName = renamingFile.value.originalFilename
-    const lastDot = originalName.lastIndexOf('.')
     let newName = renameNewName.value.trim()
-    if (lastDot > 0) {
-      newName += originalName.substring(lastDot)
+    if (renamingFile.value.isFolder !== 1) {
+      const originalName = renamingFile.value.originalFilename
+      const lastDot = originalName.lastIndexOf('.')
+      if (lastDot > 0) {
+        newName += originalName.substring(lastDot)
+      }
     }
 
     await renameFile(renamingFile.value.id, newName)
     ElMessage.success('重命名成功')
     renameDialogVisible.value = false
-    loadFileList() // 重命名后刷新列表
+    loadFileList()
+    loadBreadcrumbs()
   } catch {
-    // 错误已在拦截器中统一处理
+    // 统一拦截处理
+  }
+}
+
+// ==================== 文件夹新建功能 ====================
+
+function openNewFolderDialog() {
+  newFolderName.value = ''
+  newFolderDialogVisible.value = true
+}
+
+async function handleCreateFolder() {
+  if (!newFolderName.value.trim()) {
+    ElMessage.warning('请输入文件夹名称')
+    return
+  }
+  try {
+    await createFolder(newFolderName.value.trim(), currentParentId.value)
+    ElMessage.success('文件夹创建成功')
+    newFolderDialogVisible.value = false
+    loadFileList()
+  } catch {
+    // 统一拦截处理
+  }
+}
+
+// ==================== 文件夹移动功能 ====================
+
+async function openMoveDialog(file: FileInfo) {
+  movingFile.value = file
+  moveTargetParentId.value = null
+  // 加载根目录文件夹列表供选择
+  try {
+    const res = await getFileList(null)
+    // 只保留文件夹，排除自身
+    folderList.value = (res.data.data || []).filter(
+      (f: FileInfo) => f.isFolder === 1 && f.id !== file.id,
+    )
+  } catch {
+    folderList.value = []
+  }
+  moveDialogVisible.value = true
+}
+
+async function handleSubmitMove() {
+  if (!movingFile.value) return
+  try {
+    await moveFile(movingFile.value.id, moveTargetParentId.value)
+    ElMessage.success('移动成功')
+    moveDialogVisible.value = false
+    loadFileList()
+    loadBreadcrumbs()
+  } catch {
+    // 统一拦截处理
   }
 }
 
 // ==================== 分享功能 ====================
 
-/**
- * 打开分享创建对话框（从文件列表调用）
- * 重置表单字段并显示自定义弹窗
- * @param file 要创建分享的文件信息
- */
 function handleCreateShare(file: FileInfo) {
   shareFileId.value = file.id
   sharePassword.value = ''
@@ -285,23 +291,6 @@ function handleCreateShare(file: FileInfo) {
   shareDialogVisible.value = true
 }
 
-/**
- * 打开分享创建对话框（上传完成后调用）
- * 由于上传后只知道 taskId 不知道 fileId，此处 fileId 传 0 作为占位
- * @param taskId 上传任务ID（预留，后续可改为 fileId）
- */
-function showCreateShareDialog(taskId: string) {
-  shareFileId.value = parseInt(taskId, 36) || 0
-  sharePassword.value = ''
-  shareExpireHours.value = 24
-  shareMaxDownloads.value = 0
-  shareDialogVisible.value = true
-}
-
-/**
- * 提交创建分享请求
- * 将弹窗中的表单数据发送到后端接口
- */
 async function submitCreateShare() {
   try {
     await createShare({
@@ -313,80 +302,17 @@ async function submitCreateShare() {
     ElMessage.success('分享链接创建成功')
     shareDialogVisible.value = false
   } catch {
-    // 错误已在拦截器中统一处理
-  }
-}
-
-// ==================== 用户功能 ====================
-
-/** 退出登录 */
-function handleLogout() {
-  userStore.logout()
-  router.push('/login')
-}
-
-// ==================== 修改密码功能 ====================
-
-/**
- * 打开修改密码对话框
- * 重置所有表单字段
- */
-function openChangePasswordDialog() {
-  oldPassword.value = ''
-  newPassword.value = ''
-  confirmPassword.value = ''
-  passwordDialogVisible.value = true
-}
-
-/**
- * 提交修改密码请求
- * 先做前端校验（两次密码一致性），再调用后端接口
- */
-async function submitChangePassword() {
-  // 前端校验：新密码不能为空且长度不小于6位
-  if (!oldPassword.value) {
-    ElMessage.warning('请输入旧密码')
-    return
-  }
-  if (!newPassword.value) {
-    ElMessage.warning('请输入新密码')
-    return
-  }
-  if (newPassword.value.length < 6) {
-    ElMessage.warning('新密码长度不能少于6位')
-    return
-  }
-  if (newPassword.value !== confirmPassword.value) {
-    ElMessage.warning('两次输入的新密码不一致')
-    return
-  }
-
-  passwordLoading.value = true
-  try {
-    await changePassword({
-      oldPassword: oldPassword.value,
-      newPassword: newPassword.value,
-    })
-    ElMessage.success('密码修改成功，请使用新密码重新登录')
-    passwordDialogVisible.value = false
-    // 修改密码后退出登录，引导用户用新密码重新登录
-    userStore.logout()
-    router.push('/login')
-  } catch {
-    // 错误已在拦截器中统一处理（如旧密码错误、新密码与旧密码相同等）
-  } finally {
-    passwordLoading.value = false
+    // 统一拦截处理
   }
 }
 
 // ==================== 生命周期 ====================
 
-/** 组件挂载时加载文件列表 */
 onMounted(() => {
+  loadBreadcrumbs()
   loadFileList()
 })
 
-/** 组件卸载时清理轮询定时器 */
 onUnmounted(() => {
   stopPolling()
 })
@@ -394,199 +320,174 @@ onUnmounted(() => {
 
 <template>
   <div class="home-container">
-    <!-- 顶部导航栏 -->
-    <header class="home-header">
-      <div class="header-left">
-        <h1>Moon 云盘</h1>
-      </div>
-      <div class="header-right">
-        <el-button text @click="router.push('/shares')">分享管理</el-button>
-        <el-button text @click="router.push('/recycle-bin')">回收站</el-button>
-        <el-dropdown>
-          <span class="user-info">
-            <el-avatar :size="32" icon="UserFilled" />
-            <span class="username">{{ userStore.username }}</span>
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item>
-                <span>{{ userStore.email }}</span>
-              </el-dropdown-item>
-              <el-dropdown-item @click="openChangePasswordDialog">
-                <span>修改密码</span>
-              </el-dropdown-item>
-              <el-dropdown-item divided @click="handleLogout">
-                <span style="color: #f56c6c">退出登录</span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </div>
-    </header>
-
     <main class="home-main">
-      <!-- 文件上传区域 -->
-      <div class="upload-section">
-        <el-card class="upload-card">
-          <template #header>
-            <span>文件上传</span>
-          </template>
-
-          <el-upload
-            class="upload-area"
-            drag
-            :auto-upload="false"
-            :show-file-list="true"
-            :on-change="(file: any) => handleFileChange(file.raw)"
-            :limit="1"
-            accept="*"
-          >
-            <el-icon class="upload-icon"><UploadFilled /></el-icon>
-            <div class="upload-text">
-              <p class="upload-title">将文件拖到此处，或<em>点击上传</em></p>
-              <p class="upload-hint">支持任意文件类型，单文件最大 100MB</p>
-            </div>
-          </el-upload>
-
-          <div v-if="selectedFile" class="file-info">
-            <el-tag type="info" size="large">
-              {{ selectedFile.name }} ({{ formatFileSize(selectedFile.size) }})
-            </el-tag>
-          </div>
-
-          <el-button
-            type="primary"
-            :loading="uploading"
-            :disabled="!selectedFile"
-            class="upload-btn"
-            @click="handleUpload"
-          >
-            {{ uploading ? '上传中...' : '开始上传' }}
-          </el-button>
-
-          <!-- 上传进度条 -->
-          <div v-if="uploading || uploadStatus === 'done'" class="progress-section">
-            <div class="progress-header">
-              <span>上传进度</span>
-              <el-tag
-                :type="uploadStatus === 'done' ? 'success' : uploadStatus === 'failed' ? 'danger' : 'warning'"
-                size="small"
+      <!-- ==================== 文件/文件夹展示区域（面包屑 + 工具栏 + 列表） ==================== -->
+      <el-card class="content-card" shadow="never">
+        <!-- 面包屑导航 -->
+        <div class="breadcrumb-bar">
+          <el-breadcrumb separator="/">
+            <el-breadcrumb-item
+              v-for="(crumb, index) in breadcrumbs"
+              :key="crumb.id ?? 'root'"
+            >
+              <el-link
+                :underline="false"
+                :type="index === breadcrumbs.length - 1 ? 'default' : 'primary'"
+                :disabled="index === breadcrumbs.length - 1"
+                @click="navigateTo(crumb.id)"
               >
-                {{ uploadStatus === 'done' ? '已完成' : uploadStatus === 'failed' ? '失败' : '上传中' }}
-              </el-tag>
-            </div>
-            <el-progress
-              :percentage="uploadPercent"
-              :status="uploadStatus === 'done' ? 'success' : uploadStatus === 'failed' ? 'exception' : ''"
-              :stroke-width="20"
-              :text-inside="true"
-            />
-            <p v-if="uploadMessage" class="progress-msg">{{ uploadMessage }}</p>
-          </div>
-        </el-card>
-      </div>
+                {{ crumb.name }}
+              </el-link>
+            </el-breadcrumb-item>
+          </el-breadcrumb>
+        </div>
 
-      <!-- 文件列表区域 -->
-      <div class="file-list-section">
-        <el-card class="file-list-card">
-          <template #header>
-            <div class="file-list-header">
-              <span>我的文件</span>
-              <el-button text type="primary" :icon="'Refresh'" @click="loadFileList" :loading="fileListLoading">
-                刷新
-              </el-button>
-            </div>
-          </template>
+        <!-- 工具栏 -->
+        <div class="toolbar">
+          <el-button type="primary" :icon="FolderAdd" @click="openNewFolderDialog">
+            新建文件夹
+          </el-button>
+          <el-button text type="primary" :icon="RefreshRight" @click="loadFileList" :loading="fileListLoading">
+            刷新
+          </el-button>
+        </div>
 
-          <!-- 文件列表表格 -->
-          <el-table
-            :data="fileList"
-            v-loading="fileListLoading"
-            empty-text="暂无文件，请先上传"
-            style="width: 100%"
-            stripe
-          >
-            <el-table-column prop="originalFilename" label="文件名" min-width="200">
-              <template #default="{ row }">
+        <!-- 文件/文件夹表格 -->
+        <el-table
+          :data="fileList"
+          v-loading="fileListLoading"
+          empty-text="此文件夹为空"
+          style="width: 100%"
+          stripe
+        >
+          <el-table-column label="名称" min-width="240">
+            <template #default="{ row }">
+              <div
+                :class="['name-cell', { 'is-folder': row.isFolder === 1 }]"
+                @click="row.isFolder === 1 ? handleFolderClick(row) : undefined"
+              >
+                <el-icon v-if="row.isFolder === 1" class="folder-icon" color="#e6a23c">
+                  <FolderOpened />
+                </el-icon>
                 <span class="file-name" :title="row.originalFilename">{{ row.originalFilename }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="大小" width="120" align="center">
+            <template #default="{ row }">
+              {{ row.isFolder === 1 ? '-' : formatFileSize(row.fileSize) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="140" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.isFolder === 1 ? 'warning' : 'info'">
+                {{ row.isFolder === 1 ? '文件夹' : (row.contentType || '未知') }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="上传时间" width="180" align="center">
+            <template #default="{ row }">
+              {{ new Date(row.uploadTime).toLocaleString() }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="320" align="center" fixed="right">
+            <template #default="{ row }">
+              <template v-if="row.isFolder !== 1">
+                <el-button type="primary" size="small" :icon="Download" link @click="handleDownload(row)">下载</el-button>
+                <el-button type="success" size="small" :icon="Share" link @click="handleCreateShare(row)">分享</el-button>
               </template>
-            </el-table-column>
-            <el-table-column prop="fileSize" label="大小" width="120" align="center">
-              <template #default="{ row }">
-                {{ formatFileSize(row.fileSize) }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="contentType" label="类型" width="140" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" type="info">{{ row.contentType || '未知' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="uploadTime" label="上传时间" width="180" align="center">
-              <template #default="{ row }">
-                {{ new Date(row.uploadTime).toLocaleString() }}
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="280" align="center" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  type="primary"
-                  size="small"
-                  :icon="Download"
-                  link
-                  @click="handleDownload(row)"
-                >
-                  下载
-                </el-button>
-                <el-button
-                  type="success"
-                  size="small"
-                  :icon="Share"
-                  link
-                  @click="handleCreateShare(row)"
-                >
-                  分享
-                </el-button>
-                <el-button
-                  type="warning"
-                  size="small"
-                  :icon="Edit"
-                  link
-                  @click="openRenameDialog(row)"
-                >
-                  重命名
-                </el-button>
-                <el-button
-                  type="danger"
-                  size="small"
-                  :icon="Delete"
-                  link
-                  @click="handleDelete(row)"
-                >
-                  删除
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </div>
+              <el-button type="warning" size="small" :icon="Edit" link @click="openRenameDialog(row)">重命名</el-button>
+              <el-button type="info" size="small" :icon="'Rank'" link @click="openMoveDialog(row)">移动</el-button>
+              <el-button type="danger" size="small" :icon="Delete" link @click="handleDelete(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
     </main>
 
-    <!-- 重命名对话框 -->
+    <!-- ==================== 悬浮上传按钮（右下角） ==================== -->
+    <el-tooltip content="上传文件" placement="left">
+      <div class="upload-fab" @click="uploadDialogVisible = true">
+        <el-icon :size="24"><UploadFilled /></el-icon>
+      </div>
+    </el-tooltip>
+
+    <!-- ==================== 上传对话框 ==================== -->
     <el-dialog
-      v-model="renameDialogVisible"
-      title="重命名文件"
-      width="400px"
+      v-model="uploadDialogVisible"
+      title="上传文件"
+      width="480px"
       :close-on-click-modal="false"
+      destroy-on-close
     >
+      <p class="upload-target-hint">
+        上传到：{{ breadcrumbs[breadcrumbs.length - 1]?.name }}
+      </p>
+
+      <el-upload
+        class="upload-area"
+        drag
+        :auto-upload="false"
+        :show-file-list="true"
+        :on-change="(file: any) => handleFileChange(file.raw)"
+        :limit="1"
+        accept="*"
+      >
+        <el-icon class="upload-icon"><UploadFilled /></el-icon>
+        <div class="upload-text">
+          <p class="upload-title">将文件拖到此处，或<em>点击选择</em></p>
+        </div>
+      </el-upload>
+
+      <div v-if="selectedFile" class="file-info">
+        <el-tag type="info" size="large">
+          {{ selectedFile.name }} ({{ formatFileSize(selectedFile.size) }})
+        </el-tag>
+      </div>
+
+      <div v-if="uploading || uploadStatus === 'done'" class="progress-section">
+        <div class="progress-header">
+          <span>上传进度</span>
+          <el-tag
+            :type="uploadStatus === 'done' ? 'success' : uploadStatus === 'failed' ? 'danger' : 'warning'"
+            size="small"
+          >
+            {{ uploadStatus === 'done' ? '已完成' : uploadStatus === 'failed' ? '失败' : '上传中' }}
+          </el-tag>
+        </div>
+        <el-progress
+          :percentage="uploadPercent"
+          :status="uploadStatus === 'done' ? 'success' : uploadStatus === 'failed' ? 'exception' : ''"
+          :stroke-width="20"
+          :text-inside="true"
+        />
+        <p v-if="uploadMessage" class="progress-msg">{{ uploadMessage }}</p>
+      </div>
+
+      <template #footer>
+        <el-button @click="uploadDialogVisible = false" :disabled="uploading">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="uploading"
+          :disabled="!selectedFile"
+          @click="handleUpload"
+        >
+          {{ uploading ? '上传中...' : '开始上传' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 重命名对话框 -->
+    <el-dialog v-model="renameDialogVisible" title="重命名" width="400px" :close-on-click-modal="false">
       <el-input
         v-model="renameNewName"
-        placeholder="请输入新文件名"
+        placeholder="请输入新名称"
         maxlength="200"
         show-word-limit
         @keyup.enter="handleRename"
       >
-        <template #append>
-          <span v-if="renamingFile" class="file-ext-suffix">
+        <template v-if="renamingFile && renamingFile.isFolder !== 1" #append>
+          <span class="file-ext-suffix">
             {{ renamingFile.originalFilename.substring(renamingFile.originalFilename.lastIndexOf('.')) }}
           </span>
         </template>
@@ -597,42 +498,51 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
+    <!-- 新建文件夹对话框 -->
+    <el-dialog v-model="newFolderDialogVisible" title="新建文件夹" width="400px" :close-on-click-modal="false">
+      <el-input
+        v-model="newFolderName"
+        placeholder="请输入文件夹名称"
+        maxlength="200"
+        show-word-limit
+        @keyup.enter="handleCreateFolder"
+      />
+      <template #footer>
+        <el-button @click="newFolderDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleCreateFolder">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 移动文件/文件夹对话框 -->
+    <el-dialog v-model="moveDialogVisible" title="移动到..." width="420px" :close-on-click-modal="false">
+      <p class="move-desc" v-if="movingFile">
+        将「{{ movingFile.originalFilename }}」移动到：
+      </p>
+      <el-radio-group v-model="moveTargetParentId" style="display:flex;flex-direction:column;gap:8px">
+        <el-radio :value="null">根目录</el-radio>
+        <el-radio v-for="f in folderList" :key="f.id" :value="f.id">
+          📁 {{ f.originalFilename }}
+        </el-radio>
+      </el-radio-group>
+      <el-empty v-if="folderList.length === 0" description="没有可用的目标文件夹" :image-size="60" />
+      <template #footer>
+        <el-button @click="moveDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmitMove">移动</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 创建分享对话框 -->
-    <el-dialog
-      v-model="shareDialogVisible"
-      title="创建分享链接"
-      width="440px"
-      :close-on-click-modal="false"
-    >
+    <el-dialog v-model="shareDialogVisible" title="创建分享链接" width="440px" :close-on-click-modal="false">
       <el-form label-width="100px" label-position="left">
         <el-form-item label="提取码">
-          <el-input
-            v-model="sharePassword"
-            placeholder="可选，留空则无需提取码"
-            maxlength="20"
-            show-word-limit
-          />
+          <el-input v-model="sharePassword" placeholder="可选，留空则无需提取码" maxlength="20" show-word-limit />
         </el-form-item>
         <el-form-item label="有效时长">
-          <el-input-number
-            v-model="shareExpireHours"
-            :min="1"
-            :max="720"
-            :step="1"
-            controls-position="right"
-            style="width: 100%"
-          />
+          <el-input-number v-model="shareExpireHours" :min="1" :max="720" :step="1" controls-position="right" style="width:100%" />
           <span class="form-hint">小时，默认 24 小时，最长 720 小时（30天）</span>
         </el-form-item>
         <el-form-item label="最大下载次数">
-          <el-input-number
-            v-model="shareMaxDownloads"
-            :min="0"
-            :max="9999"
-            :step="1"
-            controls-position="right"
-            style="width: 100%"
-          />
+          <el-input-number v-model="shareMaxDownloads" :min="0" :max="9999" :step="1" controls-position="right" style="width:100%" />
           <span class="form-hint">次，0 表示不限制下载次数</span>
         </el-form-item>
       </el-form>
@@ -641,106 +551,74 @@ onUnmounted(() => {
         <el-button type="primary" @click="submitCreateShare">创建</el-button>
       </template>
     </el-dialog>
-
-    <!-- 修改密码对话框 -->
-    <el-dialog
-      v-model="passwordDialogVisible"
-      title="修改密码"
-      width="420px"
-      :close-on-click-modal="false"
-    >
-      <el-form label-width="80px" label-position="left">
-        <el-form-item label="旧密码">
-          <el-input
-            v-model="oldPassword"
-            type="password"
-            placeholder="请输入旧密码"
-            show-password
-          />
-        </el-form-item>
-        <el-form-item label="新密码">
-          <el-input
-            v-model="newPassword"
-            type="password"
-            placeholder="请输入新密码（至少6位）"
-            show-password
-          />
-        </el-form-item>
-        <el-form-item label="确认密码">
-          <el-input
-            v-model="confirmPassword"
-            type="password"
-            placeholder="请再次输入新密码"
-            show-password
-            @keyup.enter="submitChangePassword"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="passwordDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="passwordLoading" @click="submitChangePassword">
-          确认修改
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .home-container {
-  min-height: 100vh;
+  min-height: calc(100vh - 60px);
   background: #f5f7fa;
 }
 
-/* ==================== 顶部导航栏 ==================== */
-.home-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  height: 60px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-}
-
-.header-left h1 {
-  font-size: 20px;
-  color: #303133;
-  margin: 0;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.username {
-  font-size: 14px;
-  color: #303133;
-}
-
-/* ==================== 主内容区域 ==================== */
 .home-main {
   padding: 24px;
   max-width: 1000px;
   margin: 0 auto;
 }
 
-/* ==================== 上传区域 ==================== */
-.upload-section {
-  margin-bottom: 24px;
+/* ==================== 文件/文件夹展示卡片 ==================== */
+.content-card {
+  border-radius: 8px;
 }
 
-.upload-card {
-  border-radius: 8px;
+/* 面包屑 */
+.breadcrumb-bar {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+/* 工具栏 */
+.toolbar {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ==================== 悬浮上传按钮 ==================== */
+.upload-fab {
+  position: fixed;
+  right: 32px;
+  bottom: 32px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #409eff;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(64, 158, 255, 0.4);
+  transition: transform 0.2s, box-shadow 0.2s;
+  z-index: 50;
+}
+
+.upload-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 20px rgba(64, 158, 255, 0.55);
+}
+
+.upload-fab:active {
+  transform: scale(0.95);
+}
+
+/* ==================== 上传对话框 ==================== */
+.upload-target-hint {
+  margin: 0 0 12px 0;
+  color: #909399;
+  font-size: 13px;
 }
 
 .upload-area {
@@ -767,22 +645,10 @@ onUnmounted(() => {
   font-style: normal;
 }
 
-.upload-hint {
-  font-size: 12px;
-  color: #909399;
-  margin: 4px 0 0 0;
-}
-
 .file-info {
   margin: 12px 0;
 }
 
-.upload-btn {
-  margin-top: 12px;
-  width: 100%;
-}
-
-/* ==================== 进度条区域 ==================== */
 .progress-section {
   margin-top: 16px;
   padding: 16px;
@@ -805,24 +671,29 @@ onUnmounted(() => {
   color: #909399;
 }
 
-/* ==================== 文件列表区域 ==================== */
-.file-list-section {
-  margin-top: 0;
-}
-
-.file-list-card {
-  border-radius: 8px;
-}
-
-.file-list-header {
+/* ==================== 文件列表 ==================== */
+.name-cell {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
+}
+
+.name-cell.is-folder {
+  cursor: pointer;
+}
+
+.name-cell.is-folder:hover {
+  color: #409eff;
+}
+
+.folder-icon {
+  font-size: 20px;
+  flex-shrink: 0;
 }
 
 .file-name {
   display: inline-block;
-  max-width: 300px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -839,5 +710,10 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+
+.move-desc {
+  margin-bottom: 12px;
+  color: #606266;
 }
 </style>
