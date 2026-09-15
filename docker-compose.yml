@@ -10,8 +10,10 @@ services:
     ports:
       - "4000:3306"
     volumes:
-      - /XiyueTsuki-Moon/MySQL-8.4/data:/var/lib/mysql
-      - /XiyueTsuki-Moon/MySQL-8.4/conf:/etc/mysql/conf.d
+      - /XiyueTsuki-Moon-CloudDrive-Demo/MySQL-8.4/data:/var/lib/mysql
+      - /XiyueTsuki-Moon-CloudDrive-Demo/MySQL-8.4/conf:/etc/mysql/conf.d
+    networks:
+      - moon-cloud
 
   redis:
     image: redis:8.2
@@ -20,5 +22,58 @@ services:
     ports:
       - "4001:6379"
     volumes:
-      - /XiyueTsuki-Moon/Redis-8.2/data:/data
-      - /XiyueTsuki-Moon/Redis-8.2/conf:/usr/local/etc/redis
+      - /XiyueTsuki-Moon-CloudDrive-Demo/Redis-8.2/data:/data
+      - /XiyueTsuki-Moon-CloudDrive-Demo/Redis-8.2/conf:/usr/local/etc/redis
+    networks:
+      - moon-cloud
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.0
+    container_name: rocketmq-namesrv-5.3.0
+    restart: unless-stopped
+    user: root
+    environment:
+      JAVA_OPT_EXT: "-server -Xms256m -Xmx256m -Xmn128m"
+    command: sh mqnamesrv
+    volumes:
+      - /XiyueTsuki-Moon-CloudDrive-Demo/RocketMQ-5.3.0/namesrv/logs:/home/rocketmq/logs
+    networks:
+      - moon-cloud
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.0
+    container_name: rocketmq-broker-5.3.0
+    restart: unless-stopped
+    user: root
+    ports:
+      - "4002:10911"
+      - "10911:10911"
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.3.0/conf/broker.conf
+    volumes:
+      - /XiyueTsuki-Moon-CloudDrive-Demo/RocketMQ-5.3.0/broker/logs:/home/rocketmq/logs
+      - /XiyueTsuki-Moon-CloudDrive-Demo/RocketMQ-5.3.0/broker/store:/home/rocketmq/store
+      - /XiyueTsuki-Moon-CloudDrive-Demo/RocketMQ-5.3.0/broker.conf:/home/rocketmq/rocketmq-5.3.0/conf/broker.conf
+    depends_on:
+      - rocketmq-namesrv
+    networks:
+      - moon-cloud
+
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:2.1.0
+    container_name: rocketmq-dashboard
+    restart: unless-stopped
+    ports:
+      - "4003:8082"
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Dcom.rocketmq.sendMessageWithVIPChannel=false"
+    depends_on:
+      - rocketmq-namesrv
+    networks:
+      - moon-cloud
+
+networks:
+  moon-cloud:
+    driver: bridge

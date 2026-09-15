@@ -155,6 +155,13 @@ public class FileServiceImpl implements FileService {
 
     @Override
     public String getDownloadUrl(Long fileId) {
+
+        /*
+        单文件下载，生成OSS下载链接，直接从OSS下载
+
+        校验文件存在且属于当前用户 -> 生成OSS预签名 -> 直接返回预签名
+         */
+
         long userId = StpUtil.getLoginIdAsLong();
         // 查询文件记录，确保文件存在且属于当前用户
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
