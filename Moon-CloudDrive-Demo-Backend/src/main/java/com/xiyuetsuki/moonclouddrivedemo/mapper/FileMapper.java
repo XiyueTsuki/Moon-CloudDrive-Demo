@@ -25,6 +25,17 @@ public interface FileMapper extends BaseMapper<File> {
     File selectByFileHash(@Param("fileHash") String fileHash);
 
     /**
+     * 统计指定 OSS 存储文件名（stored_filename）被引用的文件记录数。
+     * 秒传后多个文件记录可能指向同一个 OSS 对象，彻底删除时需据此判断
+     * 是否为最后一个引用，避免误删仍被其他记录引用的 OSS 文件本体。
+     *
+     * @param storedFilename OSS 存储文件名
+     * @return 引用该 OSS 对象的文件记录数
+     */
+    @Select("SELECT COUNT(*) FROM tb_file WHERE stored_filename = #{storedFilename}")
+    long countByStoredFilename(@Param("storedFilename") String storedFilename);
+
+    /**
      * 统计指定用户在指定文件夹下的文件/文件夹数量，支持按文件名模糊搜索
      *
      * @param userId   用户ID

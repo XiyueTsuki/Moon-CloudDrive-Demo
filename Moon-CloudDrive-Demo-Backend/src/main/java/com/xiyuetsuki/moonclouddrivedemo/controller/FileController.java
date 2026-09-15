@@ -62,12 +62,8 @@ public class FileController {
             return Response.bad(400, "文件不能为空");
         }
 
-        try {
-            String taskId = fileService.uploadFile(file, parentId);
-            return Response.ok(taskId, "上传任务已提交");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        String taskId = fileService.uploadFile(file, parentId);
+        return Response.ok(taskId, "上传任务已提交");
     }
 
     // ==================== 分片上传（大文件）接口 ====================
@@ -85,15 +81,11 @@ public class FileController {
         if (request.getFileHash() == null || request.getFileHash().isBlank()) {
             return Response.bad(400, "文件哈希不能为空");
         }
-        try {
-            ChunkInitResponse resp = chunkUploadService.initChunkUpload(
-                    request.getFileName(), request.getFileSize(),
-                    request.getFileHash(), request.getParentId());
-            String msg = resp.isInstantComplete() ? "秒传成功" : "分片上传已初始化";
-            return Response.ok(resp, msg);
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        ChunkInitResponse resp = chunkUploadService.initChunkUpload(
+                request.getFileName(), request.getFileSize(),
+                request.getFileHash(), request.getParentId());
+        String msg = resp.isInstantComplete() ? "秒传成功" : "分片上传已初始化";
+        return Response.ok(resp, msg);
     }
 
     @Operation(summary = "上传分片", description = "上传单个分片，chunkIndex从0开始")
@@ -106,12 +98,8 @@ public class FileController {
         if (chunk.isEmpty()) {
             return Response.bad(400, "分片不能为空");
         }
-        try {
-            chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk);
-            return Response.ok("分片上传成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        chunkUploadService.uploadChunk(uploadId, chunkIndex, chunk);
+        return Response.ok("分片上传成功");
     }
 
     @Operation(summary = "完成分片上传", description = "所有分片上传完毕后调用此接口合并文件")
@@ -120,37 +108,25 @@ public class FileController {
         if (request.getUploadId() == null || request.getUploadId().isBlank()) {
             return Response.bad(400, "uploadId不能为空");
         }
-        try {
-            FileVO fileVO = chunkUploadService.completeChunkUpload(
-                    request.getUploadId(), request.getContentType());
-            return Response.ok(fileVO, "文件上传完成");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        FileVO fileVO = chunkUploadService.completeChunkUpload(
+                request.getUploadId(), request.getContentType());
+        return Response.ok(fileVO, "文件上传完成");
     }
 
     @Operation(summary = "查询分片上传进度", description = "查询分片上传进度，用于断点续传时判断哪些分片已上传")
     @GetMapping("/chunk/progress")
     public Response<ChunkProgressResponse> getChunkProgress(
             @Parameter(description = "上传任务ID") @RequestParam String uploadId) {
-        try {
-            ChunkProgressResponse progress = chunkUploadService.getChunkProgress(uploadId);
-            return Response.ok(progress, "查询成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        ChunkProgressResponse progress = chunkUploadService.getChunkProgress(uploadId);
+        return Response.ok(progress, "查询成功");
     }
 
     @Operation(summary = "取消分片上传", description = "取消分片上传并清理OSS中的碎片")
     @DeleteMapping("/chunk/abort")
     public Response<Void> abortChunkUpload(
             @Parameter(description = "上传任务ID") @RequestParam String uploadId) {
-        try {
-            chunkUploadService.abortChunkUpload(uploadId);
-            return Response.ok("分片上传已取消");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        chunkUploadService.abortChunkUpload(uploadId);
+        return Response.ok("分片上传已取消");
     }
 
     // ==================== 普通上传进度查询 ====================
@@ -212,12 +188,8 @@ public class FileController {
     @DeleteMapping("/delete")
     public Response<Void> deleteFile(
             @Parameter(description = "文件/文件夹ID") @RequestParam Long fileId) {
-        try {
-            fileService.deleteFile(fileId);
-            return Response.ok("文件已移入回收站");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        fileService.deleteFile(fileId);
+        return Response.ok("文件已移入回收站");
     }
 
     /**
@@ -233,12 +205,8 @@ public class FileController {
     public Response<Void> renameFile(
             @Parameter(description = "文件/文件夹ID") @RequestParam Long fileId,
             @Parameter(description = "新名称") @RequestParam String newName) {
-        try {
-            fileService.renameFile(fileId, newName);
-            return Response.ok("重命名成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        fileService.renameFile(fileId, newName);
+        return Response.ok("重命名成功");
     }
 
     /**
@@ -252,12 +220,8 @@ public class FileController {
     @GetMapping("/download")
     public Response<String> getDownloadUrl(
             @Parameter(description = "文件ID") @RequestParam Long fileId) {
-        try {
-            String downloadUrl = fileService.getDownloadUrl(fileId);
-            return Response.ok(downloadUrl, "获取下载链接成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        String downloadUrl = fileService.getDownloadUrl(fileId);
+        return Response.ok(downloadUrl, "获取下载链接成功");
     }
 
     // ==================== 回收站相关接口 ====================
@@ -286,12 +250,8 @@ public class FileController {
     @PutMapping("/recycle-bin/restore")
     public Response<Void> restoreFile(
             @Parameter(description = "文件ID") @RequestParam Long fileId) {
-        try {
-            fileService.restoreFile(fileId);
-            return Response.ok("文件恢复成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        fileService.restoreFile(fileId);
+        return Response.ok("文件恢复成功");
     }
 
     /**
@@ -306,12 +266,8 @@ public class FileController {
     @DeleteMapping("/recycle-bin/permanent-delete")
     public Response<Void> permanentDeleteFile(
             @Parameter(description = "文件/文件夹ID") @RequestParam Long fileId) {
-        try {
-            fileService.permanentDeleteFile(fileId);
-            return Response.ok("已彻底删除");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        fileService.permanentDeleteFile(fileId);
+        return Response.ok("已彻底删除");
     }
 
     // ==================== 文件夹相关接口 ====================
@@ -328,12 +284,8 @@ public class FileController {
     public Response<FileVO> createFolder(
             @Parameter(description = "文件夹名称") @RequestParam String folderName,
             @Parameter(description = "父文件夹ID，不传则创建在根目录") @RequestParam(required = false) Long parentId) {
-        try {
-            FileVO folder = fileService.createFolder(folderName, parentId);
-            return Response.ok(folder, "文件夹创建成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        FileVO folder = fileService.createFolder(folderName, parentId);
+        return Response.ok(folder, "文件夹创建成功");
     }
 
     /**
@@ -349,12 +301,8 @@ public class FileController {
     public Response<Void> moveFile(
             @Parameter(description = "要移动的文件/文件夹ID") @RequestParam Long fileId,
             @Parameter(description = "目标父文件夹ID，不传则移动到根目录") @RequestParam(required = false) Long targetParentId) {
-        try {
-            fileService.moveFile(fileId, targetParentId);
-            return Response.ok("移动成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        fileService.moveFile(fileId, targetParentId);
+        return Response.ok("移动成功");
     }
 
     /**

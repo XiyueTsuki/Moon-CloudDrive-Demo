@@ -115,6 +115,61 @@ export interface ChunkCompleteRequest {
   contentType: string
 }
 
+/** 上传任务状态 */
+export type UploadTaskStatus =
+  | 'pending'
+  | 'hashing'
+  | 'initializing'
+  | 'uploading'
+  | 'paused'
+  | 'completing'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+
+/**
+ * 上传任务
+ * 由上传任务管理器统一管理，支持排队、暂停、续传、取消
+ */
+export interface UploadTask {
+  /** 本地任务唯一标识（UUID） */
+  id: string
+  /** 服务端上传任务标识（init 后获取） */
+  uploadId?: string
+  /** 原始文件名 */
+  fileName: string
+  /** 文件总大小（字节） */
+  fileSize: number
+  /** 文件SHA-256哈希（init 后计算） */
+  fileHash?: string
+  /** 目标文件夹ID，null 表示根目录 */
+  parentId: number | null
+  /** 原始 File 对象引用 */
+  file: File
+  /** 当前状态 */
+  status: UploadTaskStatus
+  /** 上传进度 0-100 */
+  progress: number
+  /** 状态描述文字 */
+  message: string
+  /** 已上传字节数 */
+  uploadedBytes: number
+  /** 总分片数 */
+  totalChunks: number
+  /** 已完成分片数 */
+  completedChunks: number
+  /** 失败原因 */
+  errorMessage?: string
+  /** 任务创建时间戳 */
+  createdAt: number
+  /** 任务完成时间戳 */
+  completedAt?: number
+  /** AbortController，用于暂停时中止当前批次的网络请求 */
+  abortController?: AbortController
+  /** 上传完成的文件信息 */
+  result?: FileInfo
+}
+
 export interface CreateShareRequest {
   fileId: number
   password?: string

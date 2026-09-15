@@ -87,11 +87,7 @@ public class ShareController {
     public Response<String> getDownloadUrl(
             @Parameter(description = "分享码") @PathVariable String shareCode,
             @Parameter(description = "提取码（若分享设置了提取码则必传）") @RequestParam(required = false) String password) {
-        try {
-            String downloadUrl = shareService.getDownloadUrl(shareCode, password);
-            return Response.ok(downloadUrl, "获取下载链接成功");
-        } catch (RuntimeException e) {
-            return Response.bad(400, e.getMessage());
-        }
+        String downloadUrl = shareService.getDownloadUrl(shareCode, password);
+        return Response.ok(downloadUrl, "获取下载链接成功");
     }
 }

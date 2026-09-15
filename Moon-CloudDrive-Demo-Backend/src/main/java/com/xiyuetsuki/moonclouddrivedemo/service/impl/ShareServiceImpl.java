@@ -5,6 +5,7 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.dto.CreateShareRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ShareInfoResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.Share;
+import com.xiyuetsuki.moonclouddrivedemo.exception.BusinessException;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.FileMapper;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.ShareMapper;
 import com.xiyuetsuki.moonclouddrivedemo.service.ShareExpireManager;
@@ -40,10 +41,10 @@ public class ShareServiceImpl implements ShareService {
 
         File file = fileMapper.selectById(request.getFileId());
         if (file == null) {
-            throw new RuntimeException("文件不存在");
+            throw new BusinessException("文件不存在");
         }
         if (!file.getUserId().equals(userId)) {
-            throw new RuntimeException("无权分享此文件");
+            throw new BusinessException("无权分享此文件");
         }
 
         Share share = new Share();
@@ -86,11 +87,11 @@ public class ShareServiceImpl implements ShareService {
         Share share = validateShare(shareCode);
 
         if (share.getPassword() == null) {
-            throw new RuntimeException("此链接无需提取码");
+            throw new BusinessException("此链接无需提取码");
         }
 
         if (!passwordEncoder.matches(password, share.getPassword())) {
-            throw new RuntimeException("提取码错误");
+            throw new BusinessException("提取码错误");
         }
 
         // 仅校验提取码，不返回下载链接，不递增下载次数
@@ -105,10 +106,10 @@ public class ShareServiceImpl implements ShareService {
         // 如果分享设置了提取码，则校验密码
         if (share.getPassword() != null) {
             if (password == null || password.isEmpty()) {
-                throw new RuntimeException("此链接需要提取码");
+                throw new BusinessException("此链接需要提取码");
             }
             if (!passwordEncoder.matches(password, share.getPassword())) {
-                throw new RuntimeException("提取码错误");
+                throw new BusinessException("提取码错误");
             }
         }
 
@@ -143,10 +144,10 @@ public class ShareServiceImpl implements ShareService {
         long userId = StpUtil.getLoginIdAsLong();
         Share share = shareMapper.selectByShareCode(shareCode);
         if (share == null) {
-            throw new RuntimeException("分享链接不存在");
+            throw new BusinessException("分享链接不存在");
         }
         if (!share.getUserId().equals(userId)) {
-            throw new RuntimeException("无权取消此分享");
+            throw new BusinessException("无权取消此分享");
         }
         share.setStatus(0);
         shareMapper.updateById(share);
@@ -162,12 +163,12 @@ public class ShareServiceImpl implements ShareService {
     private Share validateShare(String shareCode) {
         Share share = shareMapper.selectByShareCode(shareCode);
         if (share == null) {
-            throw new RuntimeException("分享链接不存在");
+            throw new BusinessException("分享链接不存在");
         }
 
         // 已手动取消的链接直接拒绝
         if (share.getStatus() == 0) {
-            throw new RuntimeException("分享链接已失效");
+            throw new BusinessException("分享链接已失效");
         }
 
         boolean shouldExpire = false;
@@ -188,7 +189,7 @@ public class ShareServiceImpl implements ShareService {
             shareMapper.updateById(share);
             log.info("分享链接自动失效: code={}, reason={}", shareCode,
                     share.getExpireTime().isBefore(LocalDateTime.now()) ? "已过期" : "下载次数已用完");
-            throw new RuntimeException("分享链接已失效");
+            throw new BusinessException("分享链接已失效");
         }
 
         return share;

@@ -4,7 +4,7 @@
  *
  * 使用场景：文件超过 10MB 时自动启用，通过 shouldUseChunkUpload() 判断
  *
- * 上传流程：
+ * 完整上传流程：
  * 1. SHA-256 → 计算文件哈希用于秒传和完整性校验
  * 2. init    → 调用后端接口初始化分片上传任务
  * 3. upload  → 将文件按5MB分片，并发上传（最多3个并发）
@@ -14,6 +14,10 @@
  * 1. getProgress → 查询已上传分片列表
  * 2. 跳过已完成分片，仅上传缺失分片
  * 3. complete     → 合并所有分片
+ *
+ * 暂停/恢复流程：
+ * - 外部传入 AbortSignal，中止时抛出 ABORT_ERROR
+ * - 调用方捕获后保存 uploadId，稍后通过 resumeChunkUpload 续传
  */
 import {
   initChunkUpload,
@@ -31,12 +35,23 @@ const SMALL_FILE_THRESHOLD = 10 * 1024 * 1024
 /** 分片上传最大并发数 */
 const MAX_CONCURRENT = 3
 
+/** 暂停时抛出的错误名称，调用方以此判断是否为主动暂停 */
+export const ABORT_ERROR_NAME = 'UploadAborted'
+
 /** 分片上传过程中的回调函数 */
 export interface ChunkUploadCallbacks {
   /** 进度更新回调，percent为0-100，message为描述文字 */
   onProgress?: (percent: number, message: string) => void
   /** 状态变更回调 */
   onStatusChange?: (status: 'hashing' | 'initializing' | 'uploading' | 'completing' | 'done' | 'failed') => void
+}
+
+/** init 完成后回调，用于向外部传递 uploadId 等元数据（给 store 保存以便续传） */
+export interface ChunkInitResult {
+  uploadId: string
+  chunkCount: number
+  chunkSize: number
+  fileHash: string
 }
 
 interface ChunkTask {
@@ -69,6 +84,17 @@ export function shouldUseChunkUpload(file: File): boolean {
 }
 
 /**
+ * 创建一个 AbortError
+ * 用于在上传过程中检测到 AbortSignal 已中止时抛出，
+ * 调用方通过 error.name === ABORT_ERROR_NAME 判断是否为主动暂停
+ */
+function createAbortError(): Error {
+  const err = new Error('上传已暂停')
+  err.name = ABORT_ERROR_NAME
+  return err
+}
+
+/**
  * 完整的分片上传流程
  *
  * 步骤：
@@ -76,30 +102,43 @@ export function shouldUseChunkUpload(file: File): boolean {
  * 2. 调用后端 init 接口，获取 uploadId 和分片参数
  * 3. 如果后端返回秒传（instantComplete=true），直接返回已有文件信息
  * 4. 按 chunkSize 切分文件，分批并发上传（每批 MAX_CONCURRENT 个）
- * 5. 全部分片完成后调用 complete 接口合并文件
+ * 5. 每批上传前检查 signal?.aborted，已中止则抛出 AbortError
+ * 6. 全部分片完成后调用 complete 接口合并文件
  *
- * @param file      要上传的文件对象
- * @param parentId  目标文件夹ID，null表示根目录
- * @param callbacks 进度和状态回调
+ * @param file        要上传的文件对象
+ * @param parentId    目标文件夹ID，null表示根目录
+ * @param callbacks   进度和状态回调
+ * @param signal      AbortSignal，用于外部暂停（可选）
+ * @param onInitDone  init 完成后的回调，传出 uploadId、fileHash 等元数据（可选）
  * @returns 上传完成的文件信息
  */
 export async function chunkUpload(
   file: File,
   parentId: number | null,
   callbacks: ChunkUploadCallbacks = {},
+  signal?: AbortSignal,
+  onInitDone?: (result: ChunkInitResult) => void,
 ): Promise<FileInfo> {
   const { onProgress, onStatusChange } = callbacks
+
+  // 每次异步操作前检查是否已中止
+  function checkAborted(): void {
+    if (signal?.aborted) throw createAbortError()
+  }
 
   // 阶段1：计算文件哈希
   onStatusChange?.('hashing')
   onProgress?.(0, '正在计算文件哈希...')
+  checkAborted()
 
   const fileHash = await sha256(file)
+  checkAborted()
   onProgress?.(5, 'SHA-256 计算完成')
 
   // 阶段2：初始化分片上传
   onStatusChange?.('initializing')
   onProgress?.(5, '正在初始化分片上传...')
+  checkAborted()
 
   const initRes = await initChunkUpload({
     fileName: file.name,
@@ -107,6 +146,7 @@ export async function chunkUpload(
     fileHash,
     parentId,
   })
+  checkAborted()
 
   const initData: ChunkInitResponse = initRes.data.data
 
@@ -117,8 +157,12 @@ export async function chunkUpload(
     return initData.file!
   }
 
-  // 阶段3：构建分片任务列表
   const { uploadId, chunkCount, chunkSize } = initData
+
+  // 回调通知外部元数据（store 用于保存以便续传）
+  onInitDone?.({ uploadId, chunkCount, chunkSize, fileHash })
+
+  // 阶段3：构建分片任务列表
   const pendingTasks: ChunkTask[] = []
 
   for (let i = 0; i < chunkCount; i++) {
@@ -149,13 +193,15 @@ export async function chunkUpload(
     }
   }
 
-  // 分批并发：每次最多 MAX_CONCURRENT 个分片同时上传
+  // 分批并发：每批前检查中止信号
   for (let i = 0; i < pendingTasks.length; i += MAX_CONCURRENT) {
+    checkAborted()
     const batch = pendingTasks.slice(i, i + MAX_CONCURRENT)
     await Promise.all(batch.map(uploadSingleChunk))
   }
 
   // 阶段5：合并分片
+  checkAborted()
   onStatusChange?.('completing')
   onProgress?.(95, '正在合并分片...')
 
@@ -180,23 +226,30 @@ export async function chunkUpload(
  * 步骤：
  * 1. 查询进度，获取已完成分片集合
  * 2. 如果所有分片已完成，直接调用 complete 合并
- * 3. 否则仅上传缺失的分片，最后合并
+ * 3. 否则仅上传缺失的分片，每批前检查中止信号，最后合并
  *
- * @param uploadId 之前的上传任务标识
- * @param file     同一个文件对象（必须与初始化时一致）
- * @param callbacks 进度和状态回调
- * @returns 上传完成的文件信息
+ * @param uploadId   之前的上传任务标识
+ * @param file       同一个文件对象（必须与初始化时一致）
+ * @param callbacks  进度和状态回调
+ * @param signal     AbortSignal，用于外部暂停（可选）
+ * @returns 上传完成的文件信息，失败返回 null
  */
 export async function resumeChunkUpload(
   uploadId: string,
   file: File,
   callbacks: ChunkUploadCallbacks = {},
+  signal?: AbortSignal,
 ): Promise<FileInfo | null> {
   const { onProgress, onStatusChange } = callbacks
+
+  function checkAborted(): void {
+    if (signal?.aborted) throw createAbortError()
+  }
 
   // 查询进度
   onStatusChange?.('initializing')
   onProgress?.(0, '正在查询上传进度...')
+  checkAborted()
 
   const progressRes = await getChunkProgress(uploadId)
   const progress = progressRes.data.data
@@ -260,10 +313,12 @@ export async function resumeChunkUpload(
   }
 
   for (let i = 0; i < pendingTasks.length; i += MAX_CONCURRENT) {
+    checkAborted()
     const batch = pendingTasks.slice(i, i + MAX_CONCURRENT)
     await Promise.all(batch.map(uploadSingleChunk))
   }
 
+  checkAborted()
   onStatusChange?.('completing')
   onProgress?.(95, '正在合并分片...')
 

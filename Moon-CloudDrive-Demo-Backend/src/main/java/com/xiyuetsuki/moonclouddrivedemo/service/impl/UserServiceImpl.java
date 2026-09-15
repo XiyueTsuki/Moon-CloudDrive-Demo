@@ -6,6 +6,7 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.dto.LoginRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.LoginResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.RegisterRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.User;
+import com.xiyuetsuki.moonclouddrivedemo.exception.BusinessException;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.UserMapper;
 import com.xiyuetsuki.moonclouddrivedemo.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -76,10 +77,10 @@ public class UserServiceImpl implements UserService {
 
         String storedCode = stringRedisTemplate.opsForValue().get(redisKey);
         if (storedCode == null) {
-            throw new RuntimeException("验证码已过期或未发送");
+            throw new BusinessException("验证码已过期或未发送");
         }
         if (!storedCode.equals(request.getCode())) {
-            throw new RuntimeException("验证码错误");
+            throw new BusinessException("验证码错误");
         }
 
         User user = new User();
@@ -103,10 +104,10 @@ public class UserServiceImpl implements UserService {
     public LoginResponse login(LoginRequest request) {
         User user = userMapper.selectByEmail(request.getEmail());
         if (user == null) {
-            throw new RuntimeException("邮箱未注册");
+            throw new BusinessException("邮箱未注册");
         }
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            throw new RuntimeException("密码错误");
+            throw new BusinessException("密码错误");
         }
 
         StpUtil.login(user.getId());
@@ -128,17 +129,17 @@ public class UserServiceImpl implements UserService {
         long userId = StpUtil.getLoginIdAsLong();
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new RuntimeException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         // 校验旧密码是否正确
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
-            throw new RuntimeException("旧密码错误");
+            throw new BusinessException("旧密码错误");
         }
 
         // 校验新密码不能与旧密码相同
         if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
-            throw new RuntimeException("新密码不能与旧密码相同");
+            throw new BusinessException("新密码不能与旧密码相同");
         }
 
         // 加密存储新密码

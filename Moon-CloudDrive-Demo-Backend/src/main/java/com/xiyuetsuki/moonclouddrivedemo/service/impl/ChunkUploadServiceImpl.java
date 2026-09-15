@@ -9,6 +9,7 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.FileMapper;
 import com.xiyuetsuki.moonclouddrivedemo.service.ChunkUploadService;
+import com.xiyuetsuki.moonclouddrivedemo.exception.BusinessException;
 import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
@@ -67,15 +68,35 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             File parentFolder = fileMapper.selectByUserIdAndId(userId, parentId);
             if (parentFolder == null || parentFolder.getIsFolder() == null
                     || parentFolder.getIsFolder() != 1) {
-                throw new RuntimeException("目标文件夹不存在或不是有效文件夹");
+                throw new BusinessException("目标文件夹不存在或不是有效文件夹");
             }
         }
 
-        // 秒传检查：相同哈希的文件已存在则直接返回已有文件信息
+        // 秒传检查：相同哈希的文件已存在则直接复用OSS文件创建新记录
         File existingFile = fileMapper.selectByFileHash(fileHash);
         if (existingFile != null) {
             log.info("文件秒传(分片): {} -> {}", fileName, existingFile.getOssUrl());
-            FileVO fileVO = buildFileVO(existingFile);
+
+            /*
+             * 秒传逻辑：
+             * 文件内容已存在于OSS中，无需重复上传
+             * 但需为当前用户在数据库中创建独立的文件记录
+             * 新记录指向同一OSS文件，拥有独立的文件名、所属文件夹等属性
+             */
+            File newFile = new File();
+            newFile.setOriginalFilename(fileName);
+            newFile.setStoredFilename(existingFile.getStoredFilename());
+            newFile.setFileSize(existingFile.getFileSize());
+            newFile.setContentType(existingFile.getContentType());
+            newFile.setFileHash(fileHash);
+            newFile.setUserId(userId);
+            newFile.setOssUrl(existingFile.getOssUrl());
+            newFile.setUploadTime(LocalDateTime.now());
+            newFile.setParentId(parentId);
+            newFile.setIsFolder(0);
+            fileMapper.insert(newFile);
+
+            FileVO fileVO = buildFileVO(newFile);
             return ChunkInitResponse.instant(fileVO);
         }
 
@@ -118,13 +139,13 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 校验上传任务存在性
         ChunkMetaInfo meta = progressTracker.getChunkMeta(uploadId);
         if (meta == null) {
-            throw new RuntimeException("上传任务不存在或已过期");
+            throw new BusinessException("上传任务不存在或已过期");
         }
 
         // 客户端chunkIndex从0开始，OSS的partNumber从1开始
         int partNumber = chunkIndex + 1;
         if (partNumber < 1 || partNumber > meta.getChunkCount()) {
-            throw new RuntimeException("分片序号超出范围: " + partNumber);
+            throw new BusinessException("分片序号超出范围: " + partNumber);
         }
 
         // 通过流直接传输分片到OSS，不落盘
@@ -154,13 +175,13 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 获取上传元信息并校验任务存在
         ChunkMetaInfo meta = progressTracker.getChunkMeta(uploadId);
         if (meta == null) {
-            throw new RuntimeException("上传任务不存在或已过期");
+            throw new BusinessException("上传任务不存在或已过期");
         }
 
         // 校验所有分片是否已上传完毕
         List<PartETag> partETags = progressTracker.getPartETags(uploadId);
         if (partETags.size() != meta.getChunkCount()) {
-            throw new RuntimeException(String.format(
+            throw new BusinessException(String.format(
                     "分片未全部上传完成: 已完成 %d/%d", partETags.size(), meta.getChunkCount()));
         }
 
@@ -202,7 +223,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         ChunkProgressResponse progress = progressTracker.getChunkProgress(uploadId);
         if (progress == null) {
-            throw new RuntimeException("上传任务不存在或已过期");
+            throw new BusinessException("上传任务不存在或已过期");
         }
         return progress;
     }
@@ -218,8 +239,17 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         ChunkMetaInfo meta = progressTracker.getChunkMeta(uploadId);
         if (meta != null) {
-            // 中止OSS端的多段上传（释放未合并的碎片）
-            ossUtil.abortMultipartUpload(meta.getStoredFilename(), meta.getOssUploadId());
+            /*
+             * 中止OSS端的多段上传（释放未合并的碎片）
+             * 此操作属于 best-effort：如果OSS端任务已完成/已中止（StaleUpload），
+             * 忽略异常即可——只需确保Redis缓存被清理
+             */
+            try {
+                ossUtil.abortMultipartUpload(meta.getStoredFilename(), meta.getOssUploadId());
+            } catch (RuntimeException e) {
+                log.warn("中止OSS分片上传时发生异常（可能任务已自动清理）: uploadId={}, ossUploadId={}, error={}",
+                        uploadId, meta.getOssUploadId(), e.getMessage());
+            }
             // 清理Redis缓存
             progressTracker.cleanupChunk(uploadId);
             log.info("分片上传已取消: uploadId={}, fileName={}", uploadId, meta.getFileName());

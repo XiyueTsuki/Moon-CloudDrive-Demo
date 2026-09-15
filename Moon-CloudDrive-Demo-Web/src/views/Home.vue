@@ -6,25 +6,20 @@
  */
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import {
-  uploadFile, getProgress, getFileList, getDownloadUrl,
+  getFileList, getDownloadUrl,
   deleteFile, renameFile, createFolder, moveFile, getFolderPath,
 } from '@/api/file'
 import { createShare } from '@/api/share'
-import { chunkUpload, shouldUseChunkUpload, abortChunkUpload } from '@/utils/chunkUpload'
+import { useUploadStore } from '@/stores/upload'
+import UploadTaskPanel from '@/components/UploadTaskPanel.vue'
+import { RefreshFileListEvent } from '@/events/fileEvents'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search } from '@element-plus/icons-vue'
 import type { FileInfo } from '@/types/api'
 
 // ==================== 上传相关状态 ====================
-const uploading = ref(false)
-const uploadPercent = ref(0)
-const uploadStatus = ref('')
-const uploadMessage = ref('')
-const uploadStage = ref('')
-const currentTaskId = ref('')
-const selectedFile = ref<File | null>(null)
-const uploadDialogVisible = ref(false)
-let pollTimer: ReturnType<typeof setInterval> | null = null
+const uploadStore = useUploadStore()
+const uploadInputRef = ref<HTMLInputElement | null>(null)
 
 // ==================== 导航相关状态 ====================
 const currentParentId = ref<number | null>(null)
@@ -63,8 +58,19 @@ const shareMaxDownloads = ref(0)
 
 // ==================== 上传功能 ====================
 
-function handleFileChange(file: File) {
-  selectedFile.value = file
+/** 点击悬浮按钮 → 打开文件选择器，选中后加入上传队列 */
+function triggerUpload(): void {
+  uploadInputRef.value?.click()
+}
+
+/** 文件选择器变更 → 将文件加入上传队列 */
+function handleFileInputChange(e: Event): void {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  uploadStore.addTask(file, currentParentId.value)
+  // 清空 input 以便重复选择同一文件
+  input.value = ''
 }
 
 function formatFileSize(bytes: number): string {
@@ -73,106 +79,6 @@ function formatFileSize(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-function startPolling(taskId: string) {
-  pollTimer = setInterval(async () => {
-    try {
-      const res = await getProgress(taskId)
-      const progress = res.data.data
-      uploadPercent.value = progress.percent
-      uploadStatus.value = progress.status
-      uploadMessage.value = progress.message
-
-      if (progress.status === 'done') {
-        stopPolling()
-        uploading.value = false
-        uploadDialogVisible.value = false
-        selectedFile.value = null
-        refreshFileList()
-      } else if (progress.status === 'failed') {
-        stopPolling()
-        ElMessage.error('上传失败：' + progress.message)
-        uploading.value = false
-      }
-    } catch {
-      stopPolling()
-      uploading.value = false
-    }
-  }, 1000)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-async function handleUpload() {
-  if (!selectedFile.value) {
-    ElMessage.warning('请先选择文件')
-    return
-  }
-
-  uploading.value = true
-  uploadPercent.value = 0
-  uploadMessage.value = ''
-
-  // 文件 > 10MB 自动启用分片上传，≤ 10MB 使用普通上传
-  if (shouldUseChunkUpload(selectedFile.value)) {
-    uploadStatus.value = 'uploading'
-    uploadStage.value = 'chunk'
-
-    try {
-      await chunkUpload(selectedFile.value, currentParentId.value, {
-        onProgress(percent, message) {
-          uploadPercent.value = percent
-          uploadMessage.value = message
-        },
-        onStatusChange(status) {
-          if (status === 'done') {
-            uploadStatus.value = 'done'
-            uploadStage.value = ''
-            uploading.value = false
-            // 延迟关闭对话框让用户看到完成状态
-            setTimeout(() => {
-              uploadDialogVisible.value = false
-              selectedFile.value = null
-            }, 1200)
-            refreshFileList()
-          } else if (status === 'failed') {
-            uploadStatus.value = 'failed'
-            uploadStage.value = ''
-            ElMessage.error(uploadMessage.value || '上传失败')
-            uploading.value = false
-          }
-        },
-      })
-    } catch (e) {
-      uploadStatus.value = 'failed'
-      uploadStage.value = ''
-      const errMsg = e instanceof Error ? e.message : '上传失败'
-      ElMessage.error(errMsg)
-      uploading.value = false
-    }
-    return
-  }
-
-  // 小文件：使用原有普通上传 + 轮询进度
-  uploadStatus.value = 'uploading'
-  uploadStage.value = 'simple'
-  uploadMessage.value = '正在上传...'
-
-  try {
-    const res = await uploadFile(selectedFile.value, currentParentId.value)
-    const taskId = res.data.data
-    currentTaskId.value = taskId
-    startPolling(taskId)
-  } catch {
-    uploading.value = false
-    uploadStage.value = ''
-  }
 }
 
 // ==================== 文件列表功能 ====================
@@ -422,10 +328,12 @@ async function submitCreateShare() {
 onMounted(() => {
   loadBreadcrumbs()
   loadFileList()
+  // 监听上传完成事件，自动刷新文件列表
+  window.addEventListener(RefreshFileListEvent, refreshFileList)
 })
 
 onUnmounted(() => {
-  stopPolling()
+  window.removeEventListener(RefreshFileListEvent, refreshFileList)
 })
 </script>
 
@@ -544,82 +452,24 @@ onUnmounted(() => {
       </el-card>
     </main>
 
+    <!-- ==================== 隐藏文件选择器 ==================== -->
+    <input
+      ref="uploadInputRef"
+      type="file"
+      style="display: none"
+      accept="*"
+      @change="handleFileInputChange"
+    />
+
     <!-- ==================== 悬浮上传按钮（右下角） ==================== -->
     <el-tooltip content="上传文件" placement="left">
-      <div class="upload-fab" @click="uploadDialogVisible = true">
+      <div class="upload-fab" @click="triggerUpload">
         <el-icon :size="24"><UploadFilled /></el-icon>
       </div>
     </el-tooltip>
 
-    <!-- ==================== 上传对话框 ==================== -->
-    <el-dialog
-      v-model="uploadDialogVisible"
-      title="上传文件"
-      width="480px"
-      :close-on-click-modal="false"
-      destroy-on-close
-    >
-      <p class="upload-target-hint">
-        上传到：{{ breadcrumbs[breadcrumbs.length - 1]?.name }}
-      </p>
-
-      <el-upload
-        class="upload-area"
-        drag
-        :auto-upload="false"
-        :show-file-list="true"
-        :on-change="(file: any) => handleFileChange(file.raw)"
-        :limit="1"
-        accept="*"
-      >
-        <el-icon class="upload-icon"><UploadFilled /></el-icon>
-        <div class="upload-text">
-          <p class="upload-title">将文件拖到此处，或<em>点击选择</em></p>
-        </div>
-      </el-upload>
-
-      <div v-if="selectedFile" class="file-info">
-        <el-tag type="info" size="large">
-          {{ selectedFile.name }} ({{ formatFileSize(selectedFile.size) }})
-        </el-tag>
-      </div>
-
-      <div v-if="uploading || uploadStatus === 'done'" class="progress-section">
-        <div class="progress-header">
-          <span>上传进度</span>
-          <el-tag
-            :type="uploadStatus === 'done' ? 'success' : uploadStatus === 'failed' ? 'danger' : 'warning'"
-            size="small"
-          >
-            {{ uploadStatus === 'done' ? '已完成' : uploadStatus === 'failed' ? '失败' : '上传中' }}
-          </el-tag>
-        </div>
-        <el-progress
-          :percentage="uploadPercent"
-          :status="uploadStatus === 'done' ? 'success' : uploadStatus === 'failed' ? 'exception' : ''"
-          :stroke-width="20"
-          :text-inside="true"
-        />
-        <p v-if="uploadMessage" class="progress-msg">
-          {{ uploadMessage }}
-          <template v-if="uploadStage === 'chunk' && uploadPercent >= 10 && uploadPercent < 95">
-            ，超出 10MB 已自动启用分片上传
-          </template>
-        </p>
-      </div>
-
-      <template #footer>
-        <el-button @click="uploadDialogVisible = false" :disabled="uploading">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="uploading"
-          :disabled="!selectedFile"
-          @click="handleUpload"
-        >
-          {{ uploading ? '上传中...' : '开始上传' }}
-        </el-button>
-      </template>
-    </el-dialog>
+    <!-- ==================== 上传任务面板 ==================== -->
+    <UploadTaskPanel />
 
     <!-- 重命名对话框 -->
     <el-dialog v-model="renameDialogVisible" title="重命名" width="400px" :close-on-click-modal="false">
@@ -756,63 +606,6 @@ onUnmounted(() => {
 
 .upload-fab:active {
   transform: scale(0.95);
-}
-
-/* ==================== 上传对话框 ==================== */
-.upload-target-hint {
-  margin: 0 0 12px 0;
-  color: #909399;
-  font-size: 13px;
-}
-
-.upload-area {
-  width: 100%;
-}
-
-.upload-icon {
-  font-size: 48px;
-  color: #409eff;
-}
-
-.upload-text {
-  margin-top: 8px;
-}
-
-.upload-title {
-  font-size: 16px;
-  color: #606266;
-  margin: 0;
-}
-
-.upload-title em {
-  color: #409eff;
-  font-style: normal;
-}
-
-.file-info {
-  margin: 12px 0;
-}
-
-.progress-section {
-  margin-top: 16px;
-  padding: 16px;
-  background: #f5f7fa;
-  border-radius: 8px;
-}
-
-.progress-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  font-size: 14px;
-  color: #606266;
-}
-
-.progress-msg {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #909399;
 }
 
 /* ==================== 文件列表 ==================== */
