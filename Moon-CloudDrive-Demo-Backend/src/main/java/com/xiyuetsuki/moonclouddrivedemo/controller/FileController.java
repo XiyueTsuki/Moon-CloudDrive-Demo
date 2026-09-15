@@ -8,10 +8,13 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkInitRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkInitResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackPrepareRequest;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.UploadProgress;
 import com.xiyuetsuki.moonclouddrivedemo.service.ChunkUploadService;
 import com.xiyuetsuki.moonclouddrivedemo.service.FileService;
+import com.xiyuetsuki.moonclouddrivedemo.service.PackDownloadService;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -43,6 +46,7 @@ public class FileController {
     private final FileService fileService;
     private final ProgressTracker progressTracker;
     private final ChunkUploadService chunkUploadService;
+    private final PackDownloadService packDownloadService;
 
     /**
      * 文件上传接口
@@ -318,5 +322,106 @@ public class FileController {
             @Parameter(description = "文件夹ID，不传返回空列表") @RequestParam(required = false) Long folderId) {
         List<FileVO> path = fileService.getFolderPath(folderId);
         return Response.ok(path, "查询成功");
+    }
+
+    // ==================== 多文件打包下载接口 ====================
+
+    /**
+     * 提交打包下载任务
+     * 接收文件ID列表，发送RocketMQ消息异步处理，返回taskId供前端轮询进度
+     *
+     * @param request 包含文件ID列表的请求
+     * @return 包含taskId的响应
+     */
+    @Operation(summary = "提交打包下载任务", description = "提交多文件打包下载，返回taskId供前端轮询进度")
+    @RateLimit(dimension = RateLimitDimension.USER, maxRequests = 3, windowSeconds = 60, message = "打包下载过于频繁，请1分钟后再试")
+    @PostMapping("/pack/prepare")
+    public Response<String> preparePackDownload(@RequestBody PackPrepareRequest request) {
+        if (request.getFileIds() == null || request.getFileIds().isEmpty()) {
+            return Response.bad(400, "请至少选择一个文件");
+        }
+        String taskId = packDownloadService.preparePack(request.getFileIds());
+        return Response.ok(taskId, "打包任务已提交");
+    }
+
+    /**
+     * 查询打包进度
+     * 前端轮询此接口获取打包的实时进度
+     *
+     * @param taskId 打包任务ID
+     * @return 包含状态、百分比、消息的进度信息
+     */
+    @Operation(summary = "查询打包进度", description = "前端轮询此接口获取打包的实时进度")
+    @GetMapping("/pack/progress")
+    public Response<PackProgressResponse> getPackProgress(
+            @Parameter(description = "打包任务ID") @RequestParam String taskId) {
+        PackProgressResponse progress = packDownloadService.getPackProgress(taskId);
+        if (progress == null) {
+            return Response.bad(404, "任务不存在或已过期");
+        }
+        return Response.ok(progress, "查询成功");
+    }
+
+    /**
+     * 下载打包完成的ZIP文件
+     * 以流式方式返回ZIP文件，浏览器自动触发下载
+     *
+     * @param taskId 打包任务ID
+     */
+    @Operation(summary = "下载打包ZIP文件", description = "下载打包完成的ZIP文件")
+    @GetMapping("/pack/download")
+    public void downloadPackZip(
+            @Parameter(description = "打包任务ID") @RequestParam String taskId,
+            jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+
+        PackProgressResponse progress = packDownloadService.getPackProgress(taskId);
+        if (progress == null) {
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":404,\"msg\":\"任务不存在或已过期\"}");
+            return;
+        }
+        if (!"ready".equals(progress.getStatus())) {
+            response.setStatus(400);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":400,\"msg\":\"打包尚未完成，当前状态: " + progress.getStatus() + "\"}");
+            return;
+        }
+
+        String zipPath = packDownloadService.getPackFilePath(taskId);
+        if (zipPath == null) {
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":404,\"msg\":\"ZIP文件不存在或已过期\"}");
+            return;
+        }
+
+        java.io.File zipFile = new java.io.File(zipPath);
+        if (!zipFile.exists()) {
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":404,\"msg\":\"ZIP文件不存在或已过期\"}");
+            return;
+        }
+
+        String filename = progress.getZipFilename() != null ? progress.getZipFilename() : "pack_download.zip";
+        String encodedFilename = java.net.URLEncoder.encode(filename, java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
+
+        response.setContentType("application/zip");
+        response.setHeader("Content-Disposition", "attachment;filename=" + encodedFilename);
+        response.setContentLengthLong(zipFile.length());
+
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(zipFile);
+             java.io.OutputStream os = response.getOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = fis.read(buffer)) != -1) {
+                os.write(buffer, 0, len);
+            }
+            os.flush();
+        }
+
+        log.info("ZIP下载完成: taskId={}, size={}", taskId, zipFile.length());
     }
 }

@@ -6,7 +6,7 @@ spring:
       max-file-size: 100MB
       max-request-size: 100MB
   datasource:
-    url: jdbc:mysql://192.168.100.128:4000/Moon-CloudDrive-Demo?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
+    url: jdbc:mysql://192.168.100.128:4000/Moon-CloudDrive-Demo?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
     username: root
     password: 123
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -74,6 +74,23 @@ moon:
   chunk:
     upload:
       chunk-size: 5242880
+  pack:
+    max-file-count: 50
+    max-total-size: 536870912
+    zip-expire-minutes: 30
+
+# ========== RocketMQ 配置 ==========
+rocketmq:
+  namesrv-addr: 192.168.100.128:9876
+  producer:
+    group: pack-download-producer-group
+    send-msg-timeout: 3000
+  consumer:
+    pack-download:
+      group: pack-download-consumer-group
+      max-reconsume-times: 3
+    pack-cleanup:
+      group: pack-cleanup-consumer-group
 
 # ========== Knife4j / SpringDoc 接口文档配置 ==========
 springdoc:

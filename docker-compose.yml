@@ -32,6 +32,8 @@ services:
     container_name: rocketmq-namesrv-5.3.0
     restart: unless-stopped
     user: root
+    ports:
+      - "9876:9876"
     environment:
       JAVA_OPT_EXT: "-server -Xms256m -Xmx256m -Xmn128m"
     command: sh mqnamesrv
@@ -46,7 +48,6 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "4002:10911"
       - "10911:10911"
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876

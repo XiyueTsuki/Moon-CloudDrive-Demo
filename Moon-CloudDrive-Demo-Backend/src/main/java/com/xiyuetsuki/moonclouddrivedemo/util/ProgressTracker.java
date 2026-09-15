@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkMetaInfo;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkProgressResponse;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.UploadProgress;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +34,11 @@ public class ProgressTracker {
     private static final long TTL_MINUTES = 10;
     /** 分片上传数据的Redis有效期：24小时，给用户充足的时间窗口用于断点续传 */
     private static final long CHUNK_TTL_HOURS = 24;
+
+    /** 打包下载进度的Redis键前缀 */
+    private static final String PACK_PROGRESS_PREFIX = "pack:progress:";
+    /** 打包下载进度数据保留时间：60分钟 */
+    private static final long PACK_TTL_MINUTES = 60;
 
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
@@ -189,5 +195,46 @@ public class ProgressTracker {
         stringRedisTemplate.delete(CHUNK_META_PREFIX + uploadId);
         stringRedisTemplate.delete(CHUNK_PARTS_PREFIX + uploadId);
         stringRedisTemplate.delete(CHUNK_ETAGS_PREFIX + uploadId);
+    }
+
+    // ==================== 打包下载进度管理 ====================
+
+    /**
+     * 更新打包任务进度到 Redis，TTL 为 30 分钟（与 ZIP 文件清理时间一致）
+     *
+     * @param taskId   打包任务唯一标识
+     * @param progress 进度对象（queued/processing/ready/failed）
+     */
+    public void updatePackProgress(String taskId, PackProgressResponse progress) {
+        try {
+            String json = objectMapper.writeValueAsString(progress);
+            stringRedisTemplate.opsForValue().set(
+                    PACK_PROGRESS_PREFIX + taskId, json, PACK_TTL_MINUTES, TimeUnit.MINUTES);
+        } catch (JsonProcessingException e) {
+            log.error("打包进度序列化失败: {}", taskId, e);
+        }
+    }
+
+    /**
+     * 从 Redis 查询打包任务进度，TTL 过期后返回 null
+     *
+     * @param taskId 打包任务唯一标识
+     * @return 进度对象，过期或不存在返回 null
+     */
+    public PackProgressResponse getPackProgress(String taskId) {
+        String json = stringRedisTemplate.opsForValue().get(PACK_PROGRESS_PREFIX + taskId);
+        if (json == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, PackProgressResponse.class);
+        } catch (JsonProcessingException e) {
+            log.error("打包进度反序列化失败: {}", taskId, e);
+            return null;
+        }
+    }
+
+    public void deletePackProgress(String taskId) {
+        stringRedisTemplate.delete(PACK_PROGRESS_PREFIX + taskId);
     }
 }

@@ -1,20 +1,21 @@
 <script setup lang="ts">
 /**
  * 首页组件
- * 提供文件管理核心功能：上传、文件夹管理、下载、删除、重命名、分享、移动
+ * 提供文件管理核心功能：上传、文件夹管理、下载、删除、重命名、分享、移动、多文件打包下载
  * 支持文件夹层级导航（面包屑），区分文件和文件夹的不同操作
  */
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import {
   getFileList, getDownloadUrl,
   deleteFile, renameFile, createFolder, moveFile, getFolderPath,
+  preparePackDownload, getPackProgress,
 } from '@/api/file'
 import { createShare } from '@/api/share'
 import { useUploadStore } from '@/stores/upload'
 import UploadTaskPanel from '@/components/UploadTaskPanel.vue'
 import { RefreshFileListEvent } from '@/events/fileEvents'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search } from '@element-plus/icons-vue'
+import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search, Loading, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import type { FileInfo } from '@/types/api'
 
 // ==================== 上传相关状态 ====================
@@ -55,6 +56,26 @@ const shareFileId = ref(0)
 const sharePassword = ref('')
 const shareExpireHours = ref(24)
 const shareMaxDownloads = ref(0)
+
+// ==================== 文件选择（用于多文件打包下载）相关状态 ====================
+/** 当前页已选中的文件ID集合 */
+const selectedFileIds = ref<Set<number>>(new Set())
+/** 是否全选当前页所有文件 */
+const isAllSelected = ref(false)
+/** 是否处于全选但部分取消的半选状态 */
+const isIndeterminate = ref(false)
+
+// ==================== 打包下载弹窗相关状态 ====================
+const packDialogVisible = ref(false)
+const packTaskId = ref('')
+const packStatus = ref('')
+const packPercent = ref(0)
+const packMessage = ref('')
+const packZipFilename = ref('')
+/** 轮询定时器ID */
+let packPollTimer: ReturnType<typeof setInterval> | null = null
+/** 用于在打包对话框内中止请求的控制器 */
+let packAbortController: AbortController | null = null
 
 // ==================== 上传功能 ====================
 
@@ -97,6 +118,7 @@ async function loadFileList() {
     const pageResult = res.data.data
     fileList.value = pageResult.records
     totalFiles.value = pageResult.total
+    resyncSelectionState()
   } catch {
     // 统一拦截处理
   } finally {
@@ -323,6 +345,173 @@ async function submitCreateShare() {
   }
 }
 
+// ==================== 多文件选择功能（用于打包下载） ====================
+
+/**
+ * 计算当前页中所有可被多选的文件
+ * 排除文件夹，只选择普通文件
+ */
+function getSelectableFiles(): FileInfo[] {
+  return fileList.value.filter(f => f.isFolder !== 1)
+}
+
+/** 单行复选框变更 → 更新选中集合、全选/半选状态 */
+function handleSelectChange(fileId: number, checked: boolean) {
+  const newSet = new Set(selectedFileIds.value)
+  if (checked) {
+    newSet.add(fileId)
+  } else {
+    newSet.delete(fileId)
+  }
+  selectedFileIds.value = newSet
+  syncSelectAllState()
+}
+
+/** 全选/取消全选变更 */
+function handleSelectAllChange(checked: boolean) {
+  if (checked) {
+    const ids = getSelectableFiles().map(f => f.id)
+    selectedFileIds.value = new Set(ids)
+  } else {
+    selectedFileIds.value = new Set()
+  }
+  isAllSelected.value = checked
+  isIndeterminate.value = false
+}
+
+/** 根据当前选中集合同步全选/半选状态 */
+function syncSelectAllState() {
+  const selectable = getSelectableFiles()
+  const total = selectable.length
+  const selected = selectable.filter(f => selectedFileIds.value.has(f.id)).length
+
+  if (total === 0) {
+    isAllSelected.value = false
+    isIndeterminate.value = false
+  } else if (selected === total) {
+    isAllSelected.value = true
+    isIndeterminate.value = false
+  } else if (selected > 0) {
+    isAllSelected.value = false
+    isIndeterminate.value = true
+  } else {
+    isAllSelected.value = false
+    isIndeterminate.value = false
+  }
+}
+
+/** 翻页或刷新后重新同步全选状态（selectedFileIds 是跨页持久的） */
+function resyncSelectionState() {
+  // 新加载的文件列表可能与缓存的选择不一致，仅同步表头状态
+  syncSelectAllState()
+}
+
+// ==================== 多文件打包下载功能 ====================
+
+/**
+ * 点击"批量下载"按钮 → 提交打包任务 → 打开进度弹窗 → 轮询进度
+ * 流程：校验选中 → 提交任务 → 开弹窗并轮询 → 就绪后自动触发浏览器下载
+ */
+async function handleBatchDownload() {
+  if (selectedFileIds.value.size === 0) {
+    ElMessage.warning('请至少勾选一个文件')
+    return
+  }
+
+  try {
+    const res = await preparePackDownload(Array.from(selectedFileIds.value))
+    const taskId = res.data.data
+    startPackPolling(taskId)
+  } catch {
+    // 统一拦截处理
+  }
+}
+
+/**
+ * 开始轮询打包进度
+ * 每1秒查询一次，直到 ready / failed
+ *
+ * @param taskId 后端返回的打包任务ID
+ */
+function startPackPolling(taskId: string) {
+  // 重置状态
+  packTaskId.value = taskId
+  packStatus.value = 'queued'
+  packPercent.value = 0
+  packMessage.value = '任务已提交，等待处理...'
+  packZipFilename.value = ''
+  packDialogVisible.value = true
+
+  // 清除旧定时器
+  stopPackPolling()
+
+  packPollTimer = setInterval(async () => {
+    try {
+      const res = await getPackProgress(taskId)
+      const progress = res.data.data
+      packStatus.value = progress.status
+      packPercent.value = progress.percent
+      packMessage.value = progress.message
+      packZipFilename.value = progress.zipFilename || ''
+
+      if (progress.status === 'ready') {
+        // 打包完成，停止轮询，触发浏览器下载
+        stopPackPolling()
+        triggerPackDownload(taskId)
+      } else if (progress.status === 'failed') {
+        // 打包失败，停止轮询，保留弹窗展示错误信息
+        stopPackPolling()
+        ElMessage.error(progress.message || '打包失败')
+      }
+    } catch {
+      // 网络错误等，不中断轮询，由后端超时兜底
+    }
+  }, 1000)
+}
+
+/** 停止打包进度轮询 */
+function stopPackPolling() {
+  if (packPollTimer !== null) {
+    clearInterval(packPollTimer)
+    packPollTimer = null
+  }
+}
+
+/**
+ * 触发浏览器下载打包好的 ZIP 文件
+ * 通过创建隐藏 <a> 标签并携带 token 参数实现认证下载
+ *
+ * @param taskId 打包任务ID
+ */
+function triggerPackDownload(taskId: string) {
+  const token = localStorage.getItem('token')
+  if (!token) {
+    ElMessage.error('登录状态已失效，请重新登录')
+    return
+  }
+  const a = document.createElement('a')
+  a.href = `/api/file/pack/download?taskId=${taskId}&satoken=${token}`
+  a.download = ''
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  ElMessage.success('开始下载')
+
+  // 下载开始后延迟关闭弹窗，清空选中
+  setTimeout(() => {
+    packDialogVisible.value = false
+    selectedFileIds.value = new Set()
+    isAllSelected.value = false
+    isIndeterminate.value = false
+  }, 1500)
+}
+
+/** 用户手动关闭打包进度弹窗 → 停止轮询 */
+function handleClosePackDialog() {
+  stopPackPolling()
+  packDialogVisible.value = false
+}
+
 // ==================== 生命周期 ====================
 
 onMounted(() => {
@@ -366,6 +555,14 @@ onUnmounted(() => {
           <el-button type="primary" :icon="FolderAdd" @click="openNewFolderDialog">
             新建文件夹
           </el-button>
+          <el-button
+            type="success"
+            :icon="Download"
+            :disabled="selectedFileIds.size === 0"
+            @click="handleBatchDownload"
+          >
+            批量下载 ({{ selectedFileIds.size }})
+          </el-button>
           <el-input
             v-model="searchKeyword"
             placeholder="搜索文件名..."
@@ -386,6 +583,7 @@ onUnmounted(() => {
 
         <!-- 文件/文件夹表格 -->
         <el-table
+          ref="fileTableRef"
           :data="fileList"
           v-loading="fileListLoading"
           empty-text="此文件夹为空"
@@ -393,6 +591,23 @@ onUnmounted(() => {
           stripe
           @sort-change="handleSortChange"
         >
+          <!-- 多选复选框列 -->
+          <el-table-column width="50" align="center">
+            <template #header>
+              <el-checkbox
+                v-model="isAllSelected"
+                :indeterminate="isIndeterminate"
+                @change="handleSelectAllChange"
+              />
+            </template>
+            <template #default="{ row }">
+              <el-checkbox
+                v-if="row.isFolder !== 1"
+                :model-value="selectedFileIds.has(row.id)"
+                @change="(checked: boolean) => handleSelectChange(row.id, checked)"
+              />
+            </template>
+          </el-table-column>
           <el-table-column label="名称" min-width="240" prop="name" sortable="custom">
             <template #default="{ row }">
               <div
@@ -545,6 +760,63 @@ onUnmounted(() => {
         <el-button type="primary" @click="submitCreateShare">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- ==================== 打包下载进度对话框 ==================== -->
+    <el-dialog
+      v-model="packDialogVisible"
+      title="多文件打包下载"
+      width="440px"
+      :close-on-click-modal="false"
+      :show-close="packStatus !== 'processing' && packStatus !== 'queued'"
+      @close="handleClosePackDialog"
+    >
+      <div class="pack-progress-body">
+        <!-- 进度条 -->
+        <el-progress
+          :percentage="packPercent"
+          :status="packStatus === 'failed' ? 'exception' : packStatus === 'ready' ? 'success' : undefined"
+          :stroke-width="18"
+          :text-inside="true"
+        />
+
+        <!-- 状态文字 -->
+        <p class="pack-status-text">
+          <!-- 排队中 -->
+          <template v-if="packStatus === 'queued'">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            {{ packMessage }}
+          </template>
+          <!-- 处理中 -->
+          <template v-else-if="packStatus === 'processing'">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            {{ packMessage }}
+          </template>
+          <!-- 已完成 -->
+          <template v-else-if="packStatus === 'ready'">
+            <el-icon style="color:#67c23a"><CircleCheck /></el-icon>
+            打包完成，正在开始下载...
+          </template>
+          <!-- 失败 -->
+          <template v-else-if="packStatus === 'failed'">
+            <el-icon style="color:#f56c6c"><CircleClose /></el-icon>
+            打包失败：{{ packMessage }}
+          </template>
+          <!-- 未知状态 -->
+          <template v-else>
+            {{ packMessage || '准备中...' }}
+          </template>
+        </p>
+      </div>
+
+      <template #footer>
+        <el-button
+          v-if="packStatus !== 'processing' && packStatus !== 'queued'"
+          @click="handleClosePackDialog"
+        >
+          关闭
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -658,5 +930,24 @@ onUnmounted(() => {
 .move-desc {
   margin-bottom: 12px;
   color: #606266;
+}
+
+/* ==================== 打包下载对话框 ==================== */
+.pack-progress-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 0;
+}
+
+.pack-status-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #606266;
+  margin: 0;
+  text-align: center;
 }
 </style>

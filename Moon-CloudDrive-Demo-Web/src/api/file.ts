@@ -260,3 +260,49 @@ export function abortChunkUpload(uploadId: string) {
     params: { uploadId },
   })
 }
+
+// ==================== 多文件打包下载 API ====================
+
+export interface PackProgress {
+  status: string
+  percent: number
+  message: string
+  zipFilename: string | null
+}
+
+/**
+ * 提交打包下载任务
+ * 接收文件ID列表，返回taskId供前端轮询进度
+ *
+ * @param fileIds 要打包下载的文件ID列表
+ */
+export function preparePackDownload(fileIds: number[]) {
+  return http.post<ApiResponse<string>>('/api/file/pack/prepare', { fileIds })
+}
+
+/**
+ * 查询打包进度
+ * 前端轮询此接口获取打包的实时进度
+ *
+ * @param taskId 打包任务ID
+ */
+export function getPackProgress(taskId: string) {
+  return http.get<ApiResponse<PackProgress>>('/api/file/pack/progress', {
+    params: { taskId },
+  })
+}
+
+/**
+ * 触发浏览器下载打包完成的ZIP文件
+ * 创建隐藏 <a> 标签携带 token 参数（Sa-Token 支持从 URL 读取 token）并触发下载
+ *
+ * @param taskId 打包任务ID
+ */
+export function downloadPackZip(taskId: string) {
+  const token = localStorage.getItem('token')
+  if (!token) return
+  const a = document.createElement('a')
+  a.href = `/api/file/pack/download?taskId=${taskId}&satoken=${token}`
+  a.download = ''
+  a.click()
+}

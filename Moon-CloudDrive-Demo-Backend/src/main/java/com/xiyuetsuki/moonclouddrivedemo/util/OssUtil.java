@@ -10,6 +10,7 @@ import com.aliyun.oss.model.GeneratePresignedUrlRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadResult;
 import com.aliyun.oss.model.ListPartsRequest;
+import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.PartETag;
 import com.aliyun.oss.model.PutObjectRequest;
 import com.aliyun.oss.model.UploadPartRequest;
@@ -194,5 +195,23 @@ public class OssUtil {
                 .stream()
                 .map(p -> new PartETag(p.getPartNumber(), p.getETag()))
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * 从 OSS 下载文件并返回 OSSObject
+     * 调用方需自行关闭 OSSObject 释放连接
+     *
+     * @param storedFilename 文件在OSS中的存储名称
+     * @return OSSObject，包含文件内容流和元信息
+     */
+    public OSSObject getObject(String storedFilename) {
+        return ossClient.getObject(ossConfig.getBucketName(), storedFilename);
+    }
+
+    /**
+     * 获取 Bucket 名称
+     */
+    public String getBucketName() {
+        return ossConfig.getBucketName();
     }
 }
