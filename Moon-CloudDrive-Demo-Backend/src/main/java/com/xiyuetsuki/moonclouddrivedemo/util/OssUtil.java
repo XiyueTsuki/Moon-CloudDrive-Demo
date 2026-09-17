@@ -11,8 +11,10 @@ import com.aliyun.oss.model.InitiateMultipartUploadRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadResult;
 import com.aliyun.oss.model.ListPartsRequest;
 import com.aliyun.oss.model.OSSObject;
+import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.PartETag;
 import com.aliyun.oss.model.PutObjectRequest;
+import com.aliyun.oss.model.ResponseHeaderOverrides;
 import com.aliyun.oss.model.UploadPartRequest;
 import com.aliyun.oss.model.UploadPartResult;
 import com.xiyuetsuki.moonclouddrivedemo.config.OssConfig;
@@ -25,6 +27,7 @@ import java.net.URL;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -36,13 +39,20 @@ public class OssUtil {
     private final OssConfig ossConfig;
 
     public String upload(InputStream inputStream, String originalFilename,
-            Consumer<Double> progressCallback) {
+            String contentType, Consumer<Double> progressCallback) {
         String storedFilename = generateStoredFilename(originalFilename);
+
+        ObjectMetadata metadata = new ObjectMetadata();
+        if (contentType != null && !contentType.isEmpty()) {
+            metadata.setContentType(contentType);
+        }
+        metadata.setContentDisposition("inline");
 
         PutObjectRequest putObjectRequest = new PutObjectRequest(
                 ossConfig.getBucketName(),
                 storedFilename,
-                inputStream
+                inputStream,
+                metadata
         );
 
         if (progressCallback != null) {
@@ -65,8 +75,28 @@ public class OssUtil {
         return storedFilename;
     }
 
-    public String upload(InputStream inputStream, String originalFilename) {
-        return upload(inputStream, originalFilename, null);
+    public String upload(InputStream inputStream, String originalFilename, String contentType) {
+        return upload(inputStream, originalFilename, contentType, null);
+    }
+
+    /**
+     * 以指定的 OSS key 直接上传（不做文件名转换），适用于需要精确控制 OSS 路径的场景。
+     *
+     * @param inputStream 文件输入流
+     * @param ossKey      OSS 存储键（完整路径）
+     * @param contentType 文件内容类型
+     */
+    public void uploadWithKey(InputStream inputStream, String ossKey, String contentType) {
+        ObjectMetadata metadata = new ObjectMetadata();
+        if (contentType != null && !contentType.isEmpty()) {
+            metadata.setContentType(contentType);
+        }
+        metadata.setContentDisposition("inline");
+
+        PutObjectRequest putObjectRequest = new PutObjectRequest(
+                ossConfig.getBucketName(), ossKey, inputStream, metadata);
+        ossClient.putObject(putObjectRequest);
+        log.debug("OSS上传成功(by key): {}", ossKey);
     }
 
     public String generateStoredFilename(String originalFilename) {
@@ -93,11 +123,13 @@ public class OssUtil {
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 ossConfig.getBucketName(), storedFilename);
         request.setExpiration(expiration);
-        request.addQueryParameter("response-content-disposition",
-                "attachment;filename=" + encodedFilename);
+
+        ResponseHeaderOverrides headers = new ResponseHeaderOverrides();
+        headers.setContentDisposition("attachment;filename=" + encodedFilename);
+        request.setResponseHeaders(headers);
 
         URL url = ossClient.generatePresignedUrl(request);
-        return url.toString();
+        return url.toString().replace("http://", "https://");
     }
 
     /**
@@ -118,9 +150,17 @@ public class OssUtil {
      * @param storedFilename 文件在OSS中的存储名称
      * @return OSS返回的uploadId，用于后续分片上传和合并
      */
-    public String initiateMultipartUpload(String storedFilename) {
+    public String initiateMultipartUpload(String storedFilename, String contentType) {
         InitiateMultipartUploadRequest request = new InitiateMultipartUploadRequest(
                 ossConfig.getBucketName(), storedFilename);
+
+        ObjectMetadata metadata = new ObjectMetadata();
+        if (contentType != null && !contentType.isEmpty()) {
+            metadata.setContentType(contentType);
+        }
+        metadata.setContentDisposition("inline");
+        request.setObjectMetadata(metadata);
+
         InitiateMultipartUploadResult result = ossClient.initiateMultipartUpload(request);
         log.info("OSS分片上传初始化: {} -> uploadId={}", storedFilename, result.getUploadId());
         return result.getUploadId();
@@ -213,5 +253,35 @@ public class OssUtil {
      */
     public String getBucketName() {
         return ossConfig.getBucketName();
+    }
+
+    // ==================== 文件预览相关方法 ====================
+
+    /**
+     * 生成 OSS 预签名 URL（用于在线预览）
+     * <p>
+     * 文件的实际 Content-Type 在上传时已写入 OSS 对象元数据，预签名 URL 无需额外设置。
+     * 浏览器根据 Content-Type 自动决定渲染方式（img/video/audio/pdf 内嵌展示）。
+     * 有效期默认 30 分钟。
+     *
+     * @param storedFilename 文件在 OSS 中的存储名称
+     * @return 预签名 URL，可直接作为 img src / video src / iframe src 使用
+     */
+    public String generatePresignedUrlForPreview(String storedFilename) {
+        return generatePresignedUrlForPreview(storedFilename, 30, TimeUnit.MINUTES);
+    }
+
+    /**
+     * 生成 OSS 预签名 URL（用于在线预览），自定义有效期
+     */
+    public String generatePresignedUrlForPreview(String storedFilename, long duration, TimeUnit unit) {
+        Date expiration = new Date(System.currentTimeMillis() + unit.toMillis(duration));
+
+        GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
+                ossConfig.getBucketName(), storedFilename);
+        request.setExpiration(expiration);
+
+        URL url = ossClient.generatePresignedUrl(request);
+        return url.toString().replace("http://", "https://");
     }
 }

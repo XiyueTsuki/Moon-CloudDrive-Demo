@@ -77,6 +77,8 @@ export interface ChunkInitRequest {
   fileHash: string
   /** 目标文件夹ID，null表示根目录 */
   parentId: number | null
+  /** 文件MIME类型，如 image/png */
+  contentType: string
 }
 
 /** 分片上传初始化响应 */
@@ -188,6 +190,58 @@ export interface ShareInfo {
   downloadCount: number
   status: number
   createTime: string
+}
+
+// ==================== 文件预览相关类型 ====================
+
+/**
+ * 文件预览信息响应
+ * 前端根据 previewType 选择不同的渲染组件：
+ * - image → img 标签
+ * - video → video 播放器
+ * - audio → audio 播放器
+ * - pdf   → iframe（pdf.js 或浏览器原生渲染）
+ * - text  → highlight.js 代码高亮
+ * - unsupported → 提示下载
+ */
+export interface PreviewInfo {
+  /** 预览类型: image / video / audio / pdf / text / unsupported */
+  previewType: string
+  /** 预览 URL（图片/视频/音频/PDF 时有效，text 时为 null） */
+  previewUrl: string | null
+  /** 原始文件名 */
+  fileName: string
+  /** MIME 类型，用于浏览器 Content-Type 协商 */
+  mimeType: string
+  /** 文件大小（字节） */
+  fileSize: number
+  /** 文本文件语言标识（仅预览text类型时有效），如 "java", "json", "md" */
+  language: string | null
+}
+
+/**
+ * 文本文件预览内容响应
+ * 后端读取文本文件内容并返回，前端使用 highlight.js 按 language 标识进行代码高亮渲染
+ */
+export interface TextPreview {
+  /** 文本文件完整内容（UTF-8 解码后） */
+  content: string
+  /** 语言标识，供 highlight.js 使用，如 "java", "json", "xml", "python" */
+  language: string
+  /** 字符编码，固定为 "UTF-8" */
+  encoding: string
+}
+
+/** PDF 服务端转图片预览信息 */
+export interface PdfPreviewInfo {
+  /** PDF 总页数 */
+  totalPages: number
+  /** 转换状态: converting / ready / failed */
+  status: 'converting' | 'ready' | 'failed'
+  /** 每页图片的 OSS 预签名 URL 列表 */
+  pageUrls: string[]
+  /** 错误信息（status=failed 时有效） */
+  errorMessage?: string
 }
 
 export interface ShareInfoResponse {

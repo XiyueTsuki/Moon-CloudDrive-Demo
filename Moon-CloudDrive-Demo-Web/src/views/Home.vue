@@ -9,14 +9,18 @@ import {
   getFileList, getDownloadUrl,
   deleteFile, renameFile, createFolder, moveFile, getFolderPath,
   preparePackDownload, getPackProgress,
+  getPreviewInfo, getTextContent,
 } from '@/api/file'
 import { createShare } from '@/api/share'
 import { useUploadStore } from '@/stores/upload'
 import UploadTaskPanel from '@/components/UploadTaskPanel.vue'
+import PdfImageViewer from '@/components/PdfImageViewer.vue'
 import { RefreshFileListEvent } from '@/events/fileEvents'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search, Loading, CircleCheck, CircleClose } from '@element-plus/icons-vue'
-import type { FileInfo } from '@/types/api'
+import { UploadFilled, Download, Delete, Edit, Share, FolderAdd, FolderOpened, RefreshRight, Search, Loading, CircleCheck, CircleClose, View } from '@element-plus/icons-vue'
+import type { FileInfo, PreviewInfo } from '@/types/api'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github.css'
 
 // ==================== 上传相关状态 ====================
 const uploadStore = useUploadStore()
@@ -76,6 +80,19 @@ const packZipFilename = ref('')
 let packPollTimer: ReturnType<typeof setInterval> | null = null
 /** 用于在打包对话框内中止请求的控制器 */
 let packAbortController: AbortController | null = null
+
+// ==================== 文件预览相关状态 ====================
+const previewDialogVisible = ref(false)
+const previewLoading = ref(false)
+const previewInfo = ref<PreviewInfo | null>(null)
+/** 文本文件内容（仅文本预览时有效） */
+const previewTextContent = ref('')
+/** 经过 highlight.js 高亮后的 HTML（仅文本预览时有效） */
+const previewTextHtml = ref('')
+/** 预览错误消息 */
+const previewErrorMsg = ref('')
+/** 当前预览的文件信息（用于不支持预览时提供下载入口） */
+const previewFile = ref<FileInfo | null>(null)
 
 // ==================== 上传功能 ====================
 
@@ -512,6 +529,102 @@ function handleClosePackDialog() {
   packDialogVisible.value = false
 }
 
+// ==================== 文件在线预览功能 ====================
+
+/**
+ * 打开文件预览对话框
+ * 调用后端接口获取预览信息，根据 previewType 分流渲染：
+ * - image/video/audio/pdf → 直接使用返回的 URL
+ * - text → 再调 getTextContent 获取内容并用 highlight.js 高亮
+ * - unsupported → 显示提示
+ *
+ * @param file 要预览的文件信息
+ */
+async function handlePreview(file: FileInfo) {
+  previewFile.value = file
+  // 重置所有状态
+  previewDialogVisible.value = true
+  previewLoading.value = true
+  previewInfo.value = null
+  previewTextContent.value = ''
+  previewTextHtml.value = ''
+  previewErrorMsg.value = ''
+
+  try {
+    const res = await getPreviewInfo(file.id)
+    const info = res.data.data
+    previewInfo.value = info
+
+    // 文本类文件 → 额外获取文本内容并高亮
+    if (info.previewType === 'text') {
+      await loadTextContent(file.id, info.language || 'plaintext')
+    }
+
+    previewLoading.value = false
+  } catch {
+    previewErrorMsg.value = '加载预览信息失败，请重试'
+    previewLoading.value = false
+  }
+}
+
+/**
+ * 获取文本文件内容并进行代码高亮
+ *
+ * @param fileId   文件 ID
+ * @param language 语言标识，如 "java", "json"
+ */
+async function loadTextContent(fileId: number, language: string) {
+  try {
+    const res = await getTextContent(fileId)
+    const text = res.data.data
+    previewTextContent.value = text.content
+
+    // 使用 highlight.js 进行代码高亮
+    // plaintext 时用 highlightAuto 自动检测，否则直接指定语言
+    const result = language === 'plaintext'
+      ? hljs.highlightAuto(text.content)
+      : hljs.highlight(text.content, { language, ignoreIllegals: true })
+    previewTextHtml.value = result.value
+  } catch (e: any) {
+    previewErrorMsg.value = e?.response?.data?.msg || '获取文本内容失败'
+  }
+}
+
+/**
+ * 关闭预览对话框 → 重置所有状态，释放资源
+ */
+function handleClosePreview() {
+  previewDialogVisible.value = false
+  previewInfo.value = null
+  previewFile.value = null
+  previewTextContent.value = ''
+  previewTextHtml.value = ''
+  previewErrorMsg.value = ''
+}
+
+/**
+ * 复制文本内容到剪贴板
+ * 仅文本/代码预览时可用
+ */
+async function copyTextContent() {
+  if (!previewTextContent.value) return
+  try {
+    await navigator.clipboard.writeText(previewTextContent.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    // fallback for older browsers
+    const textarea = document.createElement('textarea')
+    textarea.value = previewTextContent.value
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    ElMessage.success('已复制到剪贴板')
+  }
+}
+
 // ==================== 生命周期 ====================
 
 onMounted(() => {
@@ -638,9 +751,10 @@ onUnmounted(() => {
               {{ new Date(row.uploadTime).toLocaleString() }}
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="320" align="center" fixed="right">
+          <el-table-column label="操作" width="380" align="center" fixed="right">
             <template #default="{ row }">
               <template v-if="row.isFolder !== 1">
+                <el-button type="primary" size="small" :icon="View" link @click="handlePreview(row)">预览</el-button>
                 <el-button type="primary" size="small" :icon="Download" link @click="handleDownload(row)">下载</el-button>
                 <el-button type="success" size="small" :icon="Share" link @click="handleCreateShare(row)">分享</el-button>
               </template>
@@ -758,6 +872,117 @@ onUnmounted(() => {
       <template #footer>
         <el-button @click="shareDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitCreateShare">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ==================== 文件预览对话框 ==================== -->
+    <el-dialog
+      v-model="previewDialogVisible"
+      :title="previewInfo?.fileName || '文件预览'"
+      width="80%"
+      :close-on-click-modal="false"
+      :destroy-on-close="true"
+      @close="handleClosePreview"
+    >
+      <div class="preview-body" v-loading="previewLoading">
+        <!-- 加载中 -->
+        <template v-if="previewLoading">
+          <div class="preview-loading">
+            <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+            <p>正在加载预览...</p>
+          </div>
+        </template>
+
+        <!-- 加载失败 -->
+        <template v-else-if="previewErrorMsg">
+          <el-result icon="error" :title="previewErrorMsg" sub-title="请稍后重试或下载文件后查看" />
+        </template>
+
+        <!-- 图片预览 -->
+        <template v-else-if="previewInfo?.previewType === 'image'">
+          <div class="preview-image-wrap">
+            <img :src="previewInfo.previewUrl!" :alt="previewInfo.fileName" class="preview-image" />
+          </div>
+        </template>
+
+        <!-- 视频预览 -->
+        <template v-else-if="previewInfo?.previewType === 'video'">
+          <div class="preview-video-wrap">
+            <video
+              :src="previewInfo.previewUrl!"
+              controls
+              autoplay
+              class="preview-video"
+              preload="metadata"
+            >
+              您的浏览器不支持视频播放
+            </video>
+          </div>
+        </template>
+
+        <!-- 音频预览 -->
+        <template v-else-if="previewInfo?.previewType === 'audio'">
+          <div class="preview-audio-wrap">
+            <el-icon :size="48" color="#409eff"><View /></el-icon>
+            <p class="preview-audio-name">{{ previewInfo.fileName }}</p>
+            <audio :src="previewInfo.previewUrl!" controls autoplay class="preview-audio">
+              您的浏览器不支持音频播放
+            </audio>
+          </div>
+        </template>
+
+        <!-- PDF 预览（服务端转图片模式） -->
+        <template v-else-if="previewInfo?.previewType === 'pdf_image'">
+          <PdfImageViewer
+            :file-id="previewFile!.id"
+            :file-name="previewInfo.fileName"
+          />
+        </template>
+
+        <!-- 文本/代码预览 -->
+        <template v-else-if="previewInfo?.previewType === 'text'">
+          <div class="preview-text-wrap">
+            <!-- 语言标签 + 复制按钮 -->
+            <div class="preview-text-header" v-if="previewInfo.language">
+              <el-tag size="small" type="info">{{ previewInfo.language }}</el-tag>
+              <el-button size="small" plain @click="copyTextContent">
+                复制内容
+              </el-button>
+            </div>
+            <!-- 代码高亮块 -->
+            <pre class="preview-code-block">
+              <code
+                v-if="previewTextHtml"
+                class="hljs"
+                v-html="previewTextHtml"
+              />
+              <code v-else class="hljs">{{ previewTextContent }}</code>
+            </pre>
+          </div>
+        </template>
+
+        <!-- 不支持预览 -->
+        <template v-else-if="previewInfo?.previewType === 'unsupported'">
+          <el-result
+            icon="warning"
+            title="该文件类型暂不支持在线预览"
+            :sub-title="`文件类型（${previewInfo?.mimeType || '未知'}）不在支持的预览范围内，请下载后查看`"
+          />
+        </template>
+
+        <!-- 无数据时兜底 -->
+        <el-empty v-else description="暂无预览数据" />
+      </div>
+
+      <template #footer>
+        <el-button @click="handleClosePreview">关闭</el-button>
+        <el-button
+          v-if="previewInfo && previewInfo.previewType === 'unsupported' && previewFile"
+          type="primary"
+          @click="previewDialogVisible = false; handleDownload(previewFile!)"
+        >
+          下载文件
+        </el-button>
       </template>
     </el-dialog>
 
@@ -949,5 +1174,116 @@ onUnmounted(() => {
   color: #606266;
   margin: 0;
   text-align: center;
+}
+
+/* ==================== 文件预览对话框 ==================== */
+.preview-body {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 加载中 */
+.preview-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #909399;
+}
+
+/* 图片预览 */
+.preview-image-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  background: #f5f5f5;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* 视频预览 */
+.preview-video-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  background: #000;
+  border-radius: 4px;
+}
+
+.preview-video {
+  max-width: 100%;
+  max-height: 70vh;
+  outline: none;
+}
+
+/* 音频预览 */
+.preview-audio-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 0;
+}
+
+.preview-audio-name {
+  font-size: 16px;
+  color: #303133;
+  margin: 0;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-audio {
+  width: 100%;
+  max-width: 480px;
+  outline: none;
+}
+
+/* 文本/代码预览 */
+.preview-text-wrap {
+  width: 100%;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-text-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+}
+
+.preview-code-block {
+  margin: 0;
+  padding: 16px;
+  background: #fafbfc;
+  border: 1px solid #e4e7ed;
+  border-radius: 0 0 4px 4px;
+  overflow: auto;
+  max-height: 60vh;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.preview-code-block code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

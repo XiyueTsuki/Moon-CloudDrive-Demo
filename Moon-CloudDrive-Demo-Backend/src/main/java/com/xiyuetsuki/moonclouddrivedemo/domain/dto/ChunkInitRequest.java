@@ -20,4 +20,7 @@ public class ChunkInitRequest {
 
     /** 上传到的目标文件夹ID，null表示根目录 */
     private Long parentId;
+
+    /** 文件MIME类型，如 image/png，用于OSS对象元数据 */
+    private String contentType;
 }

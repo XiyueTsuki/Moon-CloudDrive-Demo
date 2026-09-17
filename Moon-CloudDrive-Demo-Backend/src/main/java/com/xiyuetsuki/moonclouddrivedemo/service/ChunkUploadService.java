@@ -23,7 +23,7 @@ public interface ChunkUploadService {
      * @return 包含上传任务标识和分片参数的响应（秒传时返回已有文件信息）
      */
     ChunkInitResponse initChunkUpload(String fileName, long fileSize,
-                                      String fileHash, Long parentId);
+                                      String fileHash, Long parentId, String contentType);
 
     /**
      * 上传单个分片至OSS

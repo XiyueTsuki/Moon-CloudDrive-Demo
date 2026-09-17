@@ -42,4 +42,7 @@ public class ChunkMetaInfo {
 
     /** 上传状态：uploading / completed / aborted */
     private String status;
+
+    /** 文件MIME类型，如 image/png */
+    private String contentType;
 }

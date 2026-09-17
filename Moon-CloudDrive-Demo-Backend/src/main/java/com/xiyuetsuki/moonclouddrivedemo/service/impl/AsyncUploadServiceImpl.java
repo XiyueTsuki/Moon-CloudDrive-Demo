@@ -55,7 +55,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
         progressTracker.update(taskId, 25, "uploading", "去重检查完成，开始上传OSS");
 
         try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
-            String storedFilename = ossUtil.upload(inputStream, originalFilename,
+            String storedFilename = ossUtil.upload(inputStream, originalFilename, contentType,
                     bytesWritten -> {
                         int ossPercent = 30 + (int) (bytesWritten * 60 / fileSize);
                         progressTracker.update(taskId, Math.min(ossPercent, 90), "uploading", "OSS上传中");

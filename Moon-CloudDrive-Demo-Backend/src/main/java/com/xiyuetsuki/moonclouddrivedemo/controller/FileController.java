@@ -11,18 +11,26 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackPrepareRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PdfPreviewResponse;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PreviewInfoResponse;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.TextPreviewResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.UploadProgress;
 import com.xiyuetsuki.moonclouddrivedemo.service.ChunkUploadService;
 import com.xiyuetsuki.moonclouddrivedemo.service.FileService;
 import com.xiyuetsuki.moonclouddrivedemo.service.PackDownloadService;
+import com.xiyuetsuki.moonclouddrivedemo.service.PdfConvertService;
+import com.xiyuetsuki.moonclouddrivedemo.service.PreviewService;
+import com.xiyuetsuki.moonclouddrivedemo.config.PdfPreviewConfig;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -31,6 +39,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -47,6 +56,9 @@ public class FileController {
     private final ProgressTracker progressTracker;
     private final ChunkUploadService chunkUploadService;
     private final PackDownloadService packDownloadService;
+    private final PreviewService previewService;
+    private final PdfConvertService pdfConvertService;
+    private final PdfPreviewConfig pdfPreviewConfig;
 
     /**
      * 文件上传接口
@@ -87,7 +99,7 @@ public class FileController {
         }
         ChunkInitResponse resp = chunkUploadService.initChunkUpload(
                 request.getFileName(), request.getFileSize(),
-                request.getFileHash(), request.getParentId());
+                request.getFileHash(), request.getParentId(), request.getContentType());
         String msg = resp.isInstantComplete() ? "秒传成功" : "分片上传已初始化";
         return Response.ok(resp, msg);
     }
@@ -423,5 +435,111 @@ public class FileController {
         }
 
         log.info("ZIP下载完成: taskId={}, size={}", taskId, zipFile.length());
+    }
+
+    // ==================== 文件预览接口 ====================
+
+    /**
+     * 获取文件预览信息
+     * 根据文件扩展名返回对应的预览策略：图片 → OSS 处理 URL、视频/音频/PDF → OSS 预签名 URL、文本 → 语言标识、其他 → 不支持
+     *
+     * @param fileId 文件 ID
+     * @return 预览信息，前端根据 previewType 选择对应渲染组件
+     */
+    @Operation(summary = "获取文件预览信息", description = "根据文件类型返回不同的预览方式：图片/视频/音频/PDF返回URL，文本返回语言标识，其他返回不支持")
+    @GetMapping("/preview/info")
+    public Response<PreviewInfoResponse> getPreviewInfo(
+            @Parameter(description = "文件ID") @RequestParam Long fileId) {
+        if (fileId == null) {
+            return Response.bad(400, "文件ID不能为空");
+        }
+        PreviewInfoResponse info = previewService.getPreviewInfo(fileId);
+        return Response.ok(info, "查询成功");
+    }
+
+    /**
+     * 获取文本文件内容（用于代码高亮预览）
+     * 仅支持 txt/md/json/xml/yaml/java/py/js/html/css/sql/sh 等文本/代码文件，最大 1MB
+     *
+     * @param fileId 文件 ID
+     * @return 文本内容及语言标识，前端使用 highlight.js / Monaco Editor 渲染
+     */
+    @Operation(summary = "获取文本文件内容", description = "仅支持文本/代码类文件，最大1MB，返回内容供前端代码高亮渲染")
+    @GetMapping("/preview/text")
+    public Response<TextPreviewResponse> getTextContent(
+            @Parameter(description = "文件ID") @RequestParam Long fileId) {
+        if (fileId == null) {
+            return Response.bad(400, "文件ID不能为空");
+        }
+        TextPreviewResponse text = previewService.getTextContent(fileId);
+        return Response.ok(text, "查询成功");
+    }
+
+    /**
+     * 文件预览流式代理（安全模式）
+     * 不暴露 OSS URL，由服务端中转文件流到浏览器。适用于需要隐藏 OSS 地址的场景。
+     * 浏览器可直接作为 img src / video src / iframe src 使用此端点
+     *
+     * @param fileId   文件 ID
+     * @param response HTTP 响应对象
+     */
+    @Operation(summary = "文件预览流式代理", description = "不暴露OSS URL，由服务端中转文件流。可作为img/video/iframe的src直接使用")
+    @GetMapping("/preview/stream")
+    public void previewStream(
+            @Parameter(description = "文件ID") @RequestParam Long fileId,
+            HttpServletResponse response) {
+        previewService.previewStream(fileId, response);
+    }
+
+    // ==================== PDF 服务端转图片预览接口 ====================
+
+    /**
+     * 获取 PDF 预览信息（服务端转图片模式）
+     * 返回总页数和每页图片的 OSS URL 列表。
+     * 首次访问触发异步转换，status=converting 时前端应轮询直到 status=ready。
+     *
+     * @param fileId 文件 ID
+     * @return PDF 预览信息，包含总页数、状态、每页图片 URL
+     */
+    @Operation(summary = "获取PDF预览信息", description = "返回PDF总页数及每页图片URL的OSS预签名地址，首次访问触发异步PDF→图片转换")
+    @GetMapping("/preview/pdf")
+    public Response<PdfPreviewResponse> getPdfPreview(
+            @Parameter(description = "文件ID") @RequestParam Long fileId) {
+        if (fileId == null) {
+            return Response.bad(400, "文件ID不能为空");
+        }
+        PdfPreviewResponse preview = pdfConvertService.getPdfPreview(fileId);
+        return Response.ok(preview, "查询成功");
+    }
+
+    /**
+     * 获取 PDF 单页图片流
+     * 作为 img src 直接使用，服务端从 OSS 读取已转换的页面图片并代理输出。
+     * 设置 Cache-Control 为 24 小时，浏览器侧减少重复请求。
+     *
+     * @param fileId   文件 ID
+     * @param pageNum  页码（从 1 开始）
+     * @param response HTTP 响应对象
+     */
+    @Operation(summary = "获取PDF单页图片", description = "返回指定页的PNG图片流，可直接作为img标签的src属性使用。浏览器缓存24小时")
+    @GetMapping("/preview/pdf/page/{pageNum}")
+    public void getPdfPageImage(
+            @Parameter(description = "文件ID") @RequestParam Long fileId,
+            @Parameter(description = "页码，从1开始") @PathVariable int pageNum,
+            HttpServletResponse response) throws IOException {
+
+        if (fileId == null) {
+            response.setStatus(400);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":400,\"msg\":\"文件ID不能为空\"}");
+            return;
+        }
+
+        byte[] imageBytes = pdfConvertService.getPageImage(fileId, pageNum);
+        response.setContentType("image/" + pdfPreviewConfig.getImageFormat());
+        response.setContentLength(imageBytes.length);
+        response.setHeader("Cache-Control", "public, max-age=86400");
+        response.getOutputStream().write(imageBytes);
+        response.getOutputStream().flush();
     }
 }

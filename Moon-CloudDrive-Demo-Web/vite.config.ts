@@ -9,6 +9,9 @@ export default defineConfig({
       '@': resolve(import.meta.dirname, 'src'),
     },
   },
+  optimizeDeps: {
+    exclude: ['pdfjs-dist'],
+  },
   server: {
     proxy: {
       '/api': {

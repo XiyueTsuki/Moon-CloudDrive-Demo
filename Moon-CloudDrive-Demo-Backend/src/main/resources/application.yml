@@ -71,6 +71,13 @@ aliyun:
 
 # ========== 分片上传配置 ==========
 moon:
+  preview:
+    pdf:
+      dpi: 150
+      max-width: 1920
+      image-format: png
+      convert-timeout: 30
+      font-dir: classpath:fonts/
   chunk:
     upload:
       chunk-size: 5242880

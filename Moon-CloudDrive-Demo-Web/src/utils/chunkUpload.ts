@@ -145,6 +145,7 @@ export async function chunkUpload(
     fileSize: file.size,
     fileHash,
     parentId,
+    contentType: file.type || 'application/octet-stream',
   })
   checkAborted()
 

@@ -41,3 +41,6 @@ build/
 ### Postman ###
 .postman
 /postman/environments
+
+### develop ###
+/develop/

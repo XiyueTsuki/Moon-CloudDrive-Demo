@@ -51,7 +51,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     @Override
     public ChunkInitResponse initChunkUpload(String fileName, long fileSize,
-                                              String fileHash, Long parentId) {
+                                              String fileHash, Long parentId, String contentType) {
 
         /*
         分片上传初始化
@@ -104,7 +104,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         int chunkCount = (int) Math.ceil((double) fileSize / chunkSize);
         String uploadId = UUID.randomUUID().toString().replace("-", "");
         String storedFilename = ossUtil.generateStoredFilename(fileName);
-        String ossUploadId = ossUtil.initiateMultipartUpload(storedFilename);
+        String ossUploadId = ossUtil.initiateMultipartUpload(storedFilename, contentType);
 
         // 保存上传元信息到Redis（24小时有效期），用于后续分片上传和断点续传
         ChunkMetaInfo meta = new ChunkMetaInfo();
@@ -113,6 +113,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         meta.setFileHash(fileHash);
         meta.setUserId(userId);
         meta.setParentId(parentId);
+        meta.setContentType(contentType);
         meta.setChunkCount(chunkCount);
         meta.setChunkSize(chunkSize);
         meta.setOssUploadId(ossUploadId);

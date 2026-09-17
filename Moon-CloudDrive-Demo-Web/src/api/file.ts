@@ -3,7 +3,7 @@
  * 包含文件上传、进度查询、列表、下载、删除、重命名等功能
  */
 import http from './index'
-import type { ApiResponse, FileInfo, UploadProgress, PageResult, ChunkInitRequest, ChunkInitResponse, ChunkProgressResponse, ChunkCompleteRequest } from '@/types/api'
+import type { ApiResponse, FileInfo, UploadProgress, PageResult, ChunkInitRequest, ChunkInitResponse, ChunkProgressResponse, ChunkCompleteRequest, PreviewInfo, TextPreview } from '@/types/api'
 
 /**
  * 上传文件
@@ -305,4 +305,70 @@ export function downloadPackZip(taskId: string) {
   a.href = `/api/file/pack/download?taskId=${taskId}&satoken=${token}`
   a.download = ''
   a.click()
+}
+
+// ==================== 文件在线预览 API ====================
+
+/**
+ * 获取文件预览信息
+ * 根据文件扩展名返回对应的预览策略：
+ * - 图片 → OSS 图片处理 URL
+ * - 视频/音频/PDF → OSS 预签名 inline URL
+ * - 文本/代码 → language 标识（前端再调 getTextContent 获取内容）
+ * - 其他 → unsupported
+ *
+ * @param fileId 文件 ID
+ */
+export function getPreviewInfo(fileId: number) {
+  return http.get<ApiResponse<PreviewInfo>>('/api/file/preview/info', {
+    params: { fileId },
+  })
+}
+
+/**
+ * 获取文本文件内容（用于代码高亮预览）
+ * 仅对文本/代码类文件开放
+ *
+ * @param fileId 文件 ID
+ */
+export function getTextContent(fileId: number) {
+  return http.get<ApiResponse<TextPreview>>('/api/file/preview/text', {
+    params: { fileId },
+  })
+}
+
+// ==================== PDF 服务端转图片预览 API ====================
+
+/** PDF 转为图片后的预览信息 */
+export interface PdfPreview {
+  totalPages: number
+  status: 'converting' | 'ready' | 'failed'
+  pageUrls: string[]
+  errorMessage?: string
+}
+
+/**
+ * 获取 PDF 预览信息（服务端转图片模式）
+ * 返回总页数、转换状态和每页图片 URL。
+ * 首次访问返回 status=converting，前端轮询直到 status=ready。
+ *
+ * @param fileId 文件 ID
+ */
+export function getPdfPreview(fileId: number) {
+  return http.get<ApiResponse<PdfPreview>>('/api/file/preview/pdf', {
+    params: { fileId },
+  })
+}
+
+/**
+ * 获取 PDF 单页图片流地址
+ * 返回带认证 token 的图片流 URL，浏览器可直接作为 img src 使用。
+ * 服务端设置了 24 小时 Cache-Control，浏览器会自动缓存。
+ *
+ * @param fileId  文件 ID
+ * @param pageNum 页码（从 1 开始）
+ */
+export function getPdfPageUrl(fileId: number, pageNum: number): string {
+  const token = localStorage.getItem('token')
+  return `/api/file/preview/pdf/page/${pageNum}?fileId=${fileId}&satoken=${token}`
 }
