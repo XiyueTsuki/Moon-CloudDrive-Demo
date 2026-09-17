@@ -1,5 +1,6 @@
 package com.xiyuetsuki.moonclouddrivedemo.service;
 
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.BatchOperationResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import org.springframework.web.multipart.MultipartFile;
@@ -113,4 +114,33 @@ public interface FileService {
      * @return 从根到该文件夹的路径列表，根在前
      */
     List<FileVO> getFolderPath(Long folderId);
+
+    /**
+     * 批量软删除文件/文件夹（移入回收站），事务保证原子性。
+     * 文件夹会自动展开为所有子孙节点再一并删除
+     *
+     * @param fileIds 文件/文件夹ID列表，最多100个
+     * @return 批量操作结果
+     */
+    BatchOperationResult batchDelete(List<Long> fileIds);
+
+    /**
+     * 批量移动文件/文件夹到目标目录，事务保证原子性。
+     * 预校验：所有权、循环引用、同名冲突，全部通过后一次性移动
+     *
+     * @param fileIds         要移动的文件/文件夹ID列表
+     * @param targetParentId  目标父文件夹ID，NULL表示根目录
+     * @return 批量操作结果
+     */
+    BatchOperationResult batchMove(List<Long> fileIds, Long targetParentId);
+
+    /**
+     * 批量重命名文件/文件夹，事务保证原子性。
+     *
+     * @param fileIds 文件/文件夹ID列表
+     * @param mode    重命名模式：sequence（序号模板）/ prefix（添加前缀）/ suffix（添加后缀）/ replace（替换文本）
+     * @param value   模式参数：模板字符串或替换内容
+     * @return 批量操作结果
+     */
+    BatchOperationResult batchRename(List<Long> fileIds, String mode, String value);
 }

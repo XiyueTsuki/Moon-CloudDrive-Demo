@@ -163,4 +163,31 @@ public interface FileMapper extends BaseMapper<File> {
      */
     @Update("UPDATE tb_file SET parent_id = #{parentId} WHERE id = #{fileId}")
     int updateParentId(@Param("fileId") Long fileId, @Param("parentId") Long parentId);
+
+    /**
+     * 批量更新父文件夹ID，用于批量移动操作
+     *
+     * @param userId   用户ID
+     * @param fileIds  文件/文件夹ID列表
+     * @param parentId 目标父文件夹ID，可为 null 表示根目录
+     * @return 实际更新的行数
+     */
+    @Update("<script>UPDATE tb_file SET parent_id = #{parentId} WHERE id IN"
+            + "<foreach collection='fileIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + " AND user_id = #{userId}</script>")
+    int batchUpdateParentId(@Param("userId") Long userId,
+                            @Param("fileIds") List<Long> fileIds,
+                            @Param("parentId") Long parentId);
+
+    /**
+     * 批量软删除文件/文件夹（移入回收站）
+     *
+     * @param userId  用户ID
+     * @param fileIds 文件/文件夹ID列表
+     * @return 实际更新的行数
+     */
+    @Update("<script>UPDATE tb_file SET deleted = 1, delete_time = NOW() WHERE id IN"
+            + "<foreach collection='fileIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
+            + " AND user_id = #{userId}</script>")
+    int batchSoftDelete(@Param("userId") Long userId, @Param("fileIds") List<Long> fileIds);
 }

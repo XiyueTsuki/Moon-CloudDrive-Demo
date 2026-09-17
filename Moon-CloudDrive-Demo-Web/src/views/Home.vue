@@ -10,6 +10,7 @@ import {
   deleteFile, renameFile, createFolder, moveFile, getFolderPath,
   preparePackDownload, getPackProgress,
   getPreviewInfo, getTextContent,
+  batchDelete, batchMove, batchRename,
 } from '@/api/file'
 import { createShare } from '@/api/share'
 import { useUploadStore } from '@/stores/upload'
@@ -52,7 +53,14 @@ const newFolderName = ref('')
 const moveDialogVisible = ref(false)
 const movingFile = ref<FileInfo | null>(null)
 const moveTargetParentId = ref<number | null>(null)
-const folderList = ref<FileInfo[]>([])
+const moveExcludeId = ref<number | null>(null)
+
+// ==================== 批量操作弹窗相关状态 ====================
+const batchMoveDialogVisible = ref(false)
+const batchMoveTargetParentId = ref<number | null>(null)
+const batchRenameDialogVisible = ref(false)
+const batchRenameMode = ref('sequence')
+const batchRenameValue = ref('')
 
 // ==================== 分享弹窗相关状态 ====================
 const shareDialogVisible = ref(false)
@@ -311,17 +319,26 @@ async function handleCreateFolder() {
 async function openMoveDialog(file: FileInfo) {
   movingFile.value = file
   moveTargetParentId.value = null
-  // 加载根目录文件夹列表供选择
+  moveExcludeId.value = file.id
+  moveDialogVisible.value = true
+}
+
+async function loadMoveFolderNodes(node: any, resolve: (data: any[]) => void) {
+  const parentId = node.level === 0 ? null : node.data.id
   try {
-    const res = await getFileList(null)
-    // 只保留文件夹，排除自身
-    folderList.value = (res.data.data || []).filter(
-      (f: FileInfo) => f.isFolder === 1 && f.id !== file.id,
+    const res = await getFileList({ parentId, size: 500 })
+    resolve(
+      (res.data.data.records || [])
+        .filter((f: FileInfo) => f.isFolder === 1 && f.id !== moveExcludeId.value)
+        .map((f: FileInfo) => ({ id: f.id, label: f.originalFilename, isLeaf: false })),
     )
   } catch {
-    folderList.value = []
+    resolve([])
   }
-  moveDialogVisible.value = true
+}
+
+function handleMoveTreeNodeClick(data: { id: number }) {
+  moveTargetParentId.value = data.id
 }
 
 async function handleSubmitMove() {
@@ -529,6 +546,133 @@ function handleClosePackDialog() {
   packDialogVisible.value = false
 }
 
+// ==================== 批量操作功能 ====================
+
+function checkBatchSelection(): boolean {
+  if (selectedFileIds.value.size === 0) {
+    ElMessage.warning('请至少勾选一个文件')
+    return false
+  }
+  return true
+}
+
+async function handleBatchDelete() {
+  if (!checkBatchSelection()) return
+  const count = selectedFileIds.value.size
+  try {
+    await ElMessageBox.confirm(
+      `确定将该 ${count} 个文件/文件夹移入回收站吗？`,
+      '批量删除确认',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const res = await batchDelete(Array.from(selectedFileIds.value))
+    const result = res.data.data
+    if (result.failCount > 0 && result.successCount === 0) {
+      ElMessage.error('批量删除失败：' + result.failReasons.join('；'))
+    } else if (result.failCount > 0) {
+      ElMessage.warning(`成功删除 ${result.successCount} 个，${result.failCount} 个失败：${result.failReasons.join('；')}`)
+    } else {
+      ElMessage.success(`成功删除 ${result.successCount} 个文件`)
+    }
+    selectedFileIds.value = new Set()
+    isAllSelected.value = false
+    isIndeterminate.value = false
+    refreshFileList()
+    loadBreadcrumbs()
+  } catch {
+    // 统一拦截处理
+  }
+}
+
+async function openBatchMoveDialog() {
+  if (!checkBatchSelection()) return
+  batchMoveTargetParentId.value = null
+  batchMoveDialogVisible.value = true
+}
+
+async function loadBatchMoveFolderNodes(node: any, resolve: (data: any[]) => void) {
+  const parentId = node.level === 0 ? null : node.data.id
+  try {
+    const res = await getFileList({ parentId, size: 500 })
+    resolve(
+      (res.data.data.records || [])
+        .filter((f: FileInfo) => f.isFolder === 1)
+        .map((f: FileInfo) => ({ id: f.id, label: f.originalFilename, isLeaf: false })),
+    )
+  } catch {
+    resolve([])
+  }
+}
+
+function handleBatchMoveTreeNodeClick(data: { id: number }) {
+  batchMoveTargetParentId.value = data.id
+}
+
+async function handleSubmitBatchMove() {
+  try {
+    const res = await batchMove(
+      Array.from(selectedFileIds.value),
+      batchMoveTargetParentId.value,
+    )
+    const result = res.data.data
+    if (result.failCount > 0 && result.successCount === 0) {
+      ElMessage.error('批量移动失败：' + result.failReasons.join('；'))
+    } else if (result.failCount > 0) {
+      ElMessage.warning(`成功移动 ${result.successCount} 个，${result.failCount} 个失败：${result.failReasons.join('；')}`)
+    } else {
+      ElMessage.success(`成功移动 ${result.successCount} 个文件`)
+    }
+    batchMoveDialogVisible.value = false
+    selectedFileIds.value = new Set()
+    isAllSelected.value = false
+    isIndeterminate.value = false
+    refreshFileList()
+  } catch {
+    // 统一拦截处理
+  }
+}
+
+function openBatchRenameDialog() {
+  if (!checkBatchSelection()) return
+  batchRenameMode.value = 'sequence'
+  batchRenameValue.value = ''
+  batchRenameDialogVisible.value = true
+}
+
+async function handleSubmitBatchRename() {
+  if (!batchRenameValue.value.trim()) {
+    ElMessage.warning('请输入重命名参数')
+    return
+  }
+  try {
+    const res = await batchRename(
+      Array.from(selectedFileIds.value),
+      batchRenameMode.value,
+      batchRenameValue.value.trim(),
+    )
+    const result = res.data.data
+    if (result.failCount > 0 && result.successCount === 0) {
+      ElMessage.error('批量重命名失败：' + result.failReasons.join('；'))
+    } else if (result.failCount > 0) {
+      ElMessage.warning(`成功重命名 ${result.successCount} 个，${result.failCount} 个失败：${result.failReasons.join('；')}`)
+    } else {
+      ElMessage.success(`成功重命名 ${result.successCount} 个文件`)
+    }
+    batchRenameDialogVisible.value = false
+    selectedFileIds.value = new Set()
+    isAllSelected.value = false
+    isIndeterminate.value = false
+    refreshFileList()
+  } catch {
+    // 统一拦截处理
+  }
+}
+
 // ==================== 文件在线预览功能 ====================
 
 /**
@@ -675,6 +819,27 @@ onUnmounted(() => {
             @click="handleBatchDownload"
           >
             批量下载 ({{ selectedFileIds.size }})
+          </el-button>
+          <el-button
+            type="danger"
+            :icon="Delete"
+            :disabled="selectedFileIds.size === 0"
+            @click="handleBatchDelete"
+          >
+            批量删除
+          </el-button>
+          <el-button
+            type="warning"
+            :disabled="selectedFileIds.size === 0"
+            @click="openBatchMoveDialog"
+          >
+            批量移动
+          </el-button>
+          <el-button
+            :disabled="selectedFileIds.size === 0"
+            @click="openBatchRenameDialog"
+          >
+            批量重命名
           </el-button>
           <el-input
             v-model="searchKeyword"
@@ -837,20 +1002,113 @@ onUnmounted(() => {
     </el-dialog>
 
     <!-- 移动文件/文件夹对话框 -->
-    <el-dialog v-model="moveDialogVisible" title="移动到..." width="420px" :close-on-click-modal="false">
+    <el-dialog v-model="moveDialogVisible" title="移动到..." width="420px" :close-on-click-modal="false" destroy-on-close>
       <p class="move-desc" v-if="movingFile">
         将「{{ movingFile.originalFilename }}」移动到：
       </p>
-      <el-radio-group v-model="moveTargetParentId" style="display:flex;flex-direction:column;gap:8px">
-        <el-radio :value="null">根目录</el-radio>
-        <el-radio v-for="f in folderList" :key="f.id" :value="f.id">
-          📁 {{ f.originalFilename }}
-        </el-radio>
-      </el-radio-group>
-      <el-empty v-if="folderList.length === 0" description="没有可用的目标文件夹" :image-size="60" />
+      <div class="move-tree-wrapper">
+        <div
+          class="move-root-option"
+          :class="{ active: moveTargetParentId === null }"
+          @click="moveTargetParentId = null"
+        >
+          📂 根目录
+        </div>
+        <el-tree
+          :load="loadMoveFolderNodes"
+          lazy
+          node-key="id"
+          highlight-current
+          :current-node-key="moveTargetParentId"
+          :props="{ label: 'label', isLeaf: 'isLeaf' }"
+          @node-click="handleMoveTreeNodeClick"
+        >
+          <template #default="{ data }">
+            <span class="el-tree-node__label-custom">📁 {{ data.label }}</span>
+          </template>
+        </el-tree>
+      </div>
+      <p class="move-target-hint">
+        当前目标：{{ moveTargetParentId === null ? '根目录' : '已选文件夹' }}
+      </p>
       <template #footer>
         <el-button @click="moveDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleSubmitMove">移动</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量移动对话框 -->
+    <el-dialog v-model="batchMoveDialogVisible" title="批量移动到..." width="420px" :close-on-click-modal="false" destroy-on-close>
+      <p style="margin-bottom:12px;color:#666">已选中 {{ selectedFileIds.size }} 个文件/文件夹</p>
+      <div class="move-tree-wrapper">
+        <div
+          class="move-root-option"
+          :class="{ active: batchMoveTargetParentId === null }"
+          @click="batchMoveTargetParentId = null"
+        >
+          📂 根目录
+        </div>
+        <el-tree
+          :load="loadBatchMoveFolderNodes"
+          lazy
+          node-key="id"
+          highlight-current
+          :current-node-key="batchMoveTargetParentId"
+          :props="{ label: 'label', isLeaf: 'isLeaf' }"
+          @node-click="handleBatchMoveTreeNodeClick"
+        >
+          <template #default="{ data }">
+            <span class="el-tree-node__label-custom">📁 {{ data.label }}</span>
+          </template>
+        </el-tree>
+      </div>
+      <p class="move-target-hint">
+        当前目标：{{ batchMoveTargetParentId === null ? '根目录' : '已选文件夹' }}
+      </p>
+      <template #footer>
+        <el-button @click="batchMoveDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmitBatchMove">移动</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量重命名对话框 -->
+    <el-dialog v-model="batchRenameDialogVisible" title="批量重命名" width="500px" :close-on-click-modal="false">
+      <p style="margin-bottom:12px;color:#666">已选中 {{ selectedFileIds.size }} 个文件/文件夹</p>
+      <el-form label-width="80px" label-position="left">
+        <el-form-item label="模式">
+          <el-select v-model="batchRenameMode" style="width:100%">
+            <el-option label="序号模板 (如 图片_{n})" value="sequence" />
+            <el-option label="添加前缀" value="prefix" />
+            <el-option label="添加后缀" value="suffix" />
+            <el-option label="替换文本 (旧->新)" value="replace" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="batchRenameMode === 'sequence' ? '模板' : batchRenameMode === 'replace' ? '替换' : '内容'">
+          <el-input
+            v-model="batchRenameValue"
+            :placeholder="batchRenameMode === 'sequence'
+              ? '如：图片_  → 图片_1.jpg, 图片_2.jpg...'
+              : batchRenameMode === 'replace'
+              ? '如：旧文本->新文本'
+              : '输入要添加的内容'"
+            maxlength="100"
+            show-word-limit
+          />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        v-if="batchRenameMode === 'sequence'"
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-top:8px"
+      >
+        预览：第一个文件将变为「{{ batchRenameValue || 'file_' }}1」，
+        第二个变为「{{ batchRenameValue || 'file_' }}2」，保留原扩展名
+      </el-alert>
+      <template #footer>
+        <el-button @click="batchRenameDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmitBatchRename">确定重命名</el-button>
       </template>
     </el-dialog>
 
@@ -1155,6 +1413,38 @@ onUnmounted(() => {
 .move-desc {
   margin-bottom: 12px;
   color: #606266;
+}
+
+.move-tree-wrapper {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 4px 0;
+}
+
+.move-root-option {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #606266;
+  border-bottom: 1px solid #ebeef5;
+  transition: background 0.2s;
+}
+
+.move-root-option:hover {
+  background: #f5f7fa;
+}
+
+.move-root-option.active {
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.move-target-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 
 /* ==================== 打包下载对话框 ==================== */

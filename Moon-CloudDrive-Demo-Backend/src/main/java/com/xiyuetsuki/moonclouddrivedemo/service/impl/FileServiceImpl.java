@@ -1,6 +1,7 @@
 package com.xiyuetsuki.moonclouddrivedemo.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.BatchOperationResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.FileVO;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PageResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
@@ -13,11 +14,15 @@ import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -409,5 +414,226 @@ public class FileServiceImpl implements FileService {
         vo.setParentId(file.getParentId());
         vo.setIsFolder(file.getIsFolder());
         return vo;
+    }
+
+    // ==================== 批量操作 ====================
+
+    private static final int BATCH_MAX_SIZE = 100;
+
+    @Override
+    @Transactional(timeout = 30)
+    public BatchOperationResult batchDelete(List<Long> fileIds) {
+        long userId = StpUtil.getLoginIdAsLong();
+        BatchOperationResult result = BatchOperationResult.empty();
+
+        if (fileIds == null || fileIds.isEmpty()) {
+            result.addFail("文件列表不能为空");
+            return result;
+        }
+        if (fileIds.size() > BATCH_MAX_SIZE) {
+            result.addFail("单次最多批量操作 " + BATCH_MAX_SIZE + " 个文件");
+            return result;
+        }
+
+        List<File> files = resolveValidFiles(userId, fileIds, result);
+        if (result.getFailCount() > 0) {
+            return result;
+        }
+
+        Set<Long> allDeleteIds = new HashSet<>();
+        for (File f : files) {
+            if (f.getIsFolder() != null && f.getIsFolder() == 1) {
+                List<File> descendants = fileMapper.selectAllDescendants(f.getId());
+                for (File d : descendants) {
+                    allDeleteIds.add(d.getId());
+                }
+            } else {
+                allDeleteIds.add(f.getId());
+            }
+        }
+
+        List<Long> deleteList = new ArrayList<>(allDeleteIds);
+        int affected = fileMapper.batchSoftDelete(userId, deleteList);
+        result.setSuccessCount(affected);
+        log.info("批量删除完成: userId={}, requested={}, totalDescendants={}, affected={}",
+                userId, fileIds.size(), deleteList.size(), affected);
+        return result;
+    }
+
+    @Override
+    @Transactional(timeout = 30)
+    public BatchOperationResult batchMove(List<Long> fileIds, Long targetParentId) {
+        long userId = StpUtil.getLoginIdAsLong();
+        BatchOperationResult result = BatchOperationResult.empty();
+
+        if (fileIds == null || fileIds.isEmpty()) {
+            result.addFail("文件列表不能为空");
+            return result;
+        }
+        if (fileIds.size() > BATCH_MAX_SIZE) {
+            result.addFail("单次最多批量操作 " + BATCH_MAX_SIZE + " 个文件");
+            return result;
+        }
+
+        List<File> files = resolveValidFiles(userId, fileIds, result);
+        if (result.getFailCount() > 0) {
+            return result;
+        }
+
+        if (targetParentId != null) {
+            File targetFolder = fileMapper.selectByUserIdAndId(userId, targetParentId);
+            if (targetFolder == null || targetFolder.getIsFolder() == null || targetFolder.getIsFolder() != 1) {
+                result.addFail("目标文件夹不存在或不是有效文件夹");
+                return result;
+            }
+        }
+
+        for (File f : files) {
+            if (targetParentId != null && targetParentId.equals(f.getId())) {
+                result.addFail("\"" + f.getOriginalFilename() + "\" 不能移动到自身");
+            }
+            if (f.getIsFolder() != null && f.getIsFolder() == 1 && targetParentId != null) {
+                List<File> descendants = fileMapper.selectAllDescendants(f.getId());
+                for (File d : descendants) {
+                    if (d.getId().equals(targetParentId)) {
+                        result.addFail("不能将文件夹 \"" + f.getOriginalFilename() + "\" 移动到其子文件夹中");
+                        break;
+                    }
+                }
+            }
+            int count = fileMapper.countByNameAndParent(userId, targetParentId, f.getOriginalFilename());
+            if (count > 0) {
+                result.addFail("目标目录下已存在同名文件 \"" + f.getOriginalFilename() + "\"");
+            }
+        }
+
+        if (result.getFailCount() > 0) {
+            return result;
+        }
+
+        int affected = fileMapper.batchUpdateParentId(userId, fileIds, targetParentId);
+        result.setSuccessCount(affected);
+        log.info("批量移动完成: userId={}, count={}, targetParentId={}, affected={}",
+                userId, fileIds.size(), targetParentId, affected);
+        return result;
+    }
+
+    @Override
+    @Transactional(timeout = 30)
+    public BatchOperationResult batchRename(List<Long> fileIds, String mode, String value) {
+        long userId = StpUtil.getLoginIdAsLong();
+        BatchOperationResult result = BatchOperationResult.empty();
+
+        if (fileIds == null || fileIds.isEmpty()) {
+            result.addFail("文件列表不能为空");
+            return result;
+        }
+        if (fileIds.size() > BATCH_MAX_SIZE) {
+            result.addFail("单次最多批量操作 " + BATCH_MAX_SIZE + " 个文件");
+            return result;
+        }
+
+        List<File> files = resolveValidFiles(userId, fileIds, result);
+        if (result.getFailCount() > 0) {
+            return result;
+        }
+
+        List<String> newNames = new ArrayList<>();
+        for (int i = 0; i < files.size(); i++) {
+            File f = files.get(i);
+            String newName = generateNewName(f.getOriginalFilename(), mode, value, i + 1);
+            if (newName == null || newName.trim().isEmpty()) {
+                result.addFail("\"" + f.getOriginalFilename() + "\" 生成的新名称为空");
+                continue;
+            }
+            newName = newName.trim();
+            if (newName.equals(f.getOriginalFilename())) {
+                result.addFail("\"" + f.getOriginalFilename() + "\" 新名称与原名称相同");
+                continue;
+            }
+            newNames.add(newName);
+        }
+
+        if (result.getFailCount() > 0) {
+            return result;
+        }
+
+        for (int i = 0; i < files.size(); i++) {
+            File f = files.get(i);
+            String newName = newNames.get(i);
+            File parentFolder = null;
+            if (f.getParentId() != null) {
+                parentFolder = fileMapper.selectByUserIdAndId(userId, f.getParentId());
+            }
+            Long parentId = parentFolder != null ? parentFolder.getId() : null;
+            int conflictCount = fileMapper.countByNameAndParent(userId, parentId, newName);
+            if (conflictCount > 0) {
+                result.addFail("已存在同名文件 \"" + newName + "\"");
+            }
+        }
+
+        if (result.getFailCount() > 0) {
+            return result;
+        }
+
+        int success = 0;
+        for (int i = 0; i < files.size(); i++) {
+            File f = files.get(i);
+            f.setOriginalFilename(newNames.get(i));
+            fileMapper.updateById(f);
+            success++;
+        }
+
+        result.setSuccessCount(success);
+        log.info("批量重命名完成: userId={}, count={}, mode={}, success={}", userId, files.size(), mode, success);
+        return result;
+    }
+
+    /**
+     * 校验文件所有权：查询所有 fileId，按 userId 过滤，不存在的收集错误信息
+     */
+    private List<File> resolveValidFiles(long userId, List<Long> fileIds, BatchOperationResult result) {
+        List<File> validFiles = new ArrayList<>();
+        for (Long fileId : fileIds) {
+            File f = fileMapper.selectByUserIdAndId(userId, fileId);
+            if (f == null) {
+                result.addFail("文件 ID=" + fileId + " 不存在或无权操作");
+            } else if (f.getDeleted() != null && f.getDeleted() == 1) {
+                result.addFail("\"" + f.getOriginalFilename() + "\" 在回收站中，无法批量操作");
+            } else {
+                validFiles.add(f);
+            }
+        }
+        return validFiles;
+    }
+
+    /**
+     * 根据模式和参数生成新文件名，保留原始扩展名
+     */
+    private String generateNewName(String originalName, String mode, String value, int sequenceNum) {
+        String nameWithoutExt = originalName;
+        String ext = "";
+        int dotIndex = originalName.lastIndexOf('.');
+        if (dotIndex > 0) {
+            nameWithoutExt = originalName.substring(0, dotIndex);
+            ext = originalName.substring(dotIndex);
+        }
+
+        switch (mode != null ? mode : "sequence") {
+            case "prefix":
+                return (value != null ? value : "") + originalName;
+            case "suffix":
+                return nameWithoutExt + (value != null ? value : "") + ext;
+            case "replace":
+                if (value != null && value.contains("->")) {
+                    String[] parts = value.split("->", 2);
+                    return originalName.replace(parts[0], parts[1]);
+                }
+                return originalName;
+            case "sequence":
+            default:
+                String prefix = value != null ? value : "file_";
+                return prefix + sequenceNum + ext;
+        }
     }
 }

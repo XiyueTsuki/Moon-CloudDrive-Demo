@@ -3,6 +3,8 @@ package com.xiyuetsuki.moonclouddrivedemo.controller;
 import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimit;
 import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimitDimension;
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.BatchOperationRequest;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.BatchOperationResult;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkCompleteRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkInitRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ChunkInitResponse;
@@ -541,5 +543,59 @@ public class FileController {
         response.setHeader("Cache-Control", "public, max-age=86400");
         response.getOutputStream().write(imageBytes);
         response.getOutputStream().flush();
+    }
+
+    // ==================== 批量操作接口 ====================
+
+    /**
+     * 批量删除文件/文件夹（移入回收站）
+     *
+     * @param request 包含 fileIds 的批量操作请求
+     * @return 批量操作结果
+     */
+    @Operation(summary = "批量删除", description = "批量将文件/文件夹移入回收站，文件夹会递归删除所有子孙节点")
+    @PostMapping("/batch/delete")
+    public Response<BatchOperationResult> batchDelete(
+            @RequestBody BatchOperationRequest request) {
+        BatchOperationResult result = fileService.batchDelete(request.getFileIds());
+        if (result.getFailCount() > 0 && result.getSuccessCount() == 0) {
+            return Response.bad(400, result, "批量删除失败");
+        }
+        return Response.ok(result, "成功删除 " + result.getSuccessCount() + " 个文件");
+    }
+
+    /**
+     * 批量移动文件/文件夹到目标目录
+     *
+     * @param request 包含 fileIds 和 targetParentId 的批量操作请求
+     * @return 批量操作结果
+     */
+    @Operation(summary = "批量移动", description = "批量移动文件/文件夹到指定目录，后端校验循环引用和同名冲突")
+    @PostMapping("/batch/move")
+    public Response<BatchOperationResult> batchMove(
+            @RequestBody BatchOperationRequest request) {
+        BatchOperationResult result = fileService.batchMove(request.getFileIds(), request.getTargetParentId());
+        if (result.getFailCount() > 0 && result.getSuccessCount() == 0) {
+            return Response.bad(400, result, "批量移动失败");
+        }
+        return Response.ok(result, "成功移动 " + result.getSuccessCount() + " 个文件");
+    }
+
+    /**
+     * 批量重命名文件/文件夹
+     *
+     * @param request 包含 fileIds、mode、value 的批量操作请求
+     * @return 批量操作结果
+     */
+    @Operation(summary = "批量重命名", description = "支持序号模板(sequence)、添加前缀(prefix)、添加后缀(suffix)、替换文本(replace)四种模式")
+    @PostMapping("/batch/rename")
+    public Response<BatchOperationResult> batchRename(
+            @RequestBody BatchOperationRequest request) {
+        BatchOperationResult result = fileService.batchRename(
+                request.getFileIds(), request.getMode(), request.getValue());
+        if (result.getFailCount() > 0 && result.getSuccessCount() == 0) {
+            return Response.bad(400, result, "批量重命名失败");
+        }
+        return Response.ok(result, "成功重命名 " + result.getSuccessCount() + " 个文件");
     }
 }

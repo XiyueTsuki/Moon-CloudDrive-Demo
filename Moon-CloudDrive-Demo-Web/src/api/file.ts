@@ -372,3 +372,48 @@ export function getPdfPageUrl(fileId: number, pageNum: number): string {
   const token = localStorage.getItem('token')
   return `/api/file/preview/pdf/page/${pageNum}?fileId=${fileId}&satoken=${token}`
 }
+
+// ==================== 批量操作 API ====================
+
+export interface BatchOperationResult {
+  successCount: number
+  failCount: number
+  failReasons: string[]
+}
+
+/**
+ * 批量删除文件/文件夹（移入回收站）
+ *
+ * @param fileIds 文件/文件夹ID列表
+ */
+export function batchDelete(fileIds: number[]) {
+  return http.post<ApiResponse<BatchOperationResult>>('/api/file/batch/delete', { fileIds })
+}
+
+/**
+ * 批量移动文件/文件夹到目标目录
+ *
+ * @param fileIds         文件/文件夹ID列表
+ * @param targetParentId  目标父文件夹ID，不传则移动到根目录
+ */
+export function batchMove(fileIds: number[], targetParentId?: number | null) {
+  return http.post<ApiResponse<BatchOperationResult>>('/api/file/batch/move', {
+    fileIds,
+    targetParentId: targetParentId ?? null,
+  })
+}
+
+/**
+ * 批量重命名文件/文件夹
+ *
+ * @param fileIds 文件/文件夹ID列表
+ * @param mode    模式：sequence / prefix / suffix / replace
+ * @param value   模式参数
+ */
+export function batchRename(fileIds: number[], mode: string, value: string) {
+  return http.post<ApiResponse<BatchOperationResult>>('/api/file/batch/rename', {
+    fileIds,
+    mode,
+    value,
+  })
+}
