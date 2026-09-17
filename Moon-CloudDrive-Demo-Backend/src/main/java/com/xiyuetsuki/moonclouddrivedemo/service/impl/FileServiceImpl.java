@@ -13,6 +13,9 @@ import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -81,6 +84,8 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Cacheable(value = "fileList",
+            key = "T(cn.dev33.satoken.stp.StpUtil).getLoginIdAsLong() + ':list:' + (#parentId != null ? #parentId : 'root') + ':' + #page + ':' + #size + ':' + #sortBy + ':' + #sortOrder + ':' + (#keyword != null ? #keyword : '')")
     public PageResult<FileVO> listFiles(Long parentId, int page, int size,
                                         String sortBy, String sortOrder, String keyword) {
         long userId = StpUtil.getLoginIdAsLong();
@@ -109,6 +114,7 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @CacheEvict(value = "fileList", allEntries = true)
     public void deleteFile(Long fileId) {
         long userId = StpUtil.getLoginIdAsLong();
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
@@ -140,6 +146,7 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @CacheEvict(value = "fileList", allEntries = true)
     public void renameFile(Long fileId, String newName) {
         // 校验新文件名不能为空
         if (newName == null || newName.trim().isEmpty()) {
@@ -183,6 +190,8 @@ public class FileServiceImpl implements FileService {
     // ==================== 回收站功能 ====================
 
     @Override
+    @Cacheable(value = "recycleBin",
+            key = "T(cn.dev33.satoken.stp.StpUtil).getLoginIdAsLong() + ':recycle'")
     public List<FileVO> listRecycleBin() {
         long userId = StpUtil.getLoginIdAsLong();
         List<File> files = fileMapper.selectRecycleBinByUserId(userId);
@@ -190,6 +199,10 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Caching(evict = {
+            @CacheEvict(value = "fileList", allEntries = true),
+            @CacheEvict(value = "recycleBin", allEntries = true)
+    })
     public void restoreFile(Long fileId) {
         long userId = StpUtil.getLoginIdAsLong();
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
@@ -221,6 +234,10 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Caching(evict = {
+            @CacheEvict(value = "fileList", allEntries = true),
+            @CacheEvict(value = "recycleBin", allEntries = true)
+    })
     public void permanentDeleteFile(Long fileId) {
         long userId = StpUtil.getLoginIdAsLong();
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
@@ -280,6 +297,7 @@ public class FileServiceImpl implements FileService {
     // ==================== 文件夹功能 ====================
 
     @Override
+    @CacheEvict(value = "fileList", allEntries = true)
     public FileVO createFolder(String folderName, Long parentId) {
         long userId = StpUtil.getLoginIdAsLong();
 
@@ -322,6 +340,10 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Caching(evict = {
+            @CacheEvict(value = "fileList", allEntries = true),
+            @CacheEvict(value = "folderPath", allEntries = true)
+    })
     public void moveFile(Long fileId, Long targetParentId) {
         long userId = StpUtil.getLoginIdAsLong();
         File file = fileMapper.selectByUserIdAndId(userId, fileId);
@@ -363,6 +385,8 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    @Cacheable(value = "folderPath",
+            key = "T(cn.dev33.satoken.stp.StpUtil).getLoginIdAsLong() + ':path:' + (#folderId != null ? #folderId : 'root')")
     public List<FileVO> getFolderPath(Long folderId) {
         if (folderId == null) {
             return List.of();
@@ -422,6 +446,10 @@ public class FileServiceImpl implements FileService {
 
     @Override
     @Transactional(timeout = 30)
+    @Caching(evict = {
+            @CacheEvict(value = "fileList", allEntries = true),
+            @CacheEvict(value = "recycleBin", allEntries = true)
+    })
     public BatchOperationResult batchDelete(List<Long> fileIds) {
         long userId = StpUtil.getLoginIdAsLong();
         BatchOperationResult result = BatchOperationResult.empty();
@@ -462,6 +490,10 @@ public class FileServiceImpl implements FileService {
 
     @Override
     @Transactional(timeout = 30)
+    @Caching(evict = {
+            @CacheEvict(value = "fileList", allEntries = true),
+            @CacheEvict(value = "folderPath", allEntries = true)
+    })
     public BatchOperationResult batchMove(List<Long> fileIds, Long targetParentId) {
         long userId = StpUtil.getLoginIdAsLong();
         BatchOperationResult result = BatchOperationResult.empty();
@@ -520,6 +552,7 @@ public class FileServiceImpl implements FileService {
 
     @Override
     @Transactional(timeout = 30)
+    @CacheEvict(value = "fileList", allEntries = true)
     public BatchOperationResult batchRename(List<Long> fileIds, String mode, String value) {
         long userId = StpUtil.getLoginIdAsLong();
         BatchOperationResult result = BatchOperationResult.empty();

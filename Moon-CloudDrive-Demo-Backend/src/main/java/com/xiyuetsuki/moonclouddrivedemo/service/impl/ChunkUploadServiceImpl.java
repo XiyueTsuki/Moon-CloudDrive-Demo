@@ -14,6 +14,7 @@ import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -164,6 +165,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     @Override
+    @CacheEvict(value = "fileList", allEntries = true)
     public FileVO completeChunkUpload(String uploadId, String contentType) {
 
         /*

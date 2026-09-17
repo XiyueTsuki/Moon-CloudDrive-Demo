@@ -3,10 +3,11 @@ package com.xiyuetsuki.moonclouddrivedemo.service.impl;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.FileMapper;
 import com.xiyuetsuki.moonclouddrivedemo.service.AsyncUploadService;
-import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
+import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -29,6 +30,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
 
     @Override
     @Async("uploadTaskExecutor")
+    @CacheEvict(value = "fileList", allEntries = true)
     public void execute(String taskId, long userId, String originalFilename,
             byte[] fileBytes, long fileSize, String contentType, Long parentId) {
 
