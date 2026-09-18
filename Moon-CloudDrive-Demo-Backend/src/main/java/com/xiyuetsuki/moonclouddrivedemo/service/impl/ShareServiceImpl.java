@@ -116,20 +116,24 @@ public class ShareServiceImpl implements ShareService {
         File file = fileMapper.selectById(share.getFileId());
         String downloadUrl = ossUtil.generatePresignedUrl(file.getStoredFilename(), file.getOriginalFilename());
 
-        // 递增下载次数
-        int newCount = share.getDownloadCount() + 1;
-        share.setDownloadCount(newCount);
-
-        // 达到最大下载次数时，立即将链接状态置为失效
-        if (share.getMaxDownloads() > 0 && newCount >= share.getMaxDownloads()) {
-            share.setStatus(0);
-            log.info("分享链接已达最大下载次数，自动失效: code={}, downloadCount={}/{}",
-                    shareCode, newCount, share.getMaxDownloads());
+        // 原子递增下载次数 + 判断是否达到最大下载限制
+        // MySQL InnoDB 行级锁保证并发安全，不会漏计或超计
+        int rows = shareMapper.incrementDownloadCountAndCheckLimit(share.getId());
+        if (rows > 0) {
+            log.info("分享文件下载: code={}", shareCode);
+        } else {
+            // 更新失败说明分享已失效或达到上限，重新查询确认状态用于日志
+            Share latest = shareMapper.selectById(share.getId());
+            if (latest != null && latest.getMaxDownloads() > 0
+                    && latest.getDownloadCount() >= latest.getMaxDownloads()) {
+                log.info("分享链接已达最大下载次数，自动失效: code={}, downloadCount={}/{}",
+                        shareCode, latest.getDownloadCount(), latest.getMaxDownloads());
+            } else {
+                log.info("分享链接已失效: code={}", shareCode);
+            }
+            throw new BusinessException("分享链接已失效");
         }
 
-        shareMapper.updateById(share);
-
-        log.info("分享文件下载: code={}, downloadCount={}/{}", shareCode, newCount, share.getMaxDownloads());
         return downloadUrl;
     }
 

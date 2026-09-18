@@ -7,6 +7,8 @@ import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
@@ -27,6 +30,7 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
     private final OssUtil ossUtil;
     private final FileMapper fileMapper;
     private final ProgressTracker progressTracker;
+    private final RedissonClient redissonClient;
 
     @Override
     @Async("uploadTaskExecutor")
@@ -34,46 +38,58 @@ public class AsyncUploadServiceImpl implements AsyncUploadService {
     public void execute(String taskId, long userId, String originalFilename,
             byte[] fileBytes, long fileSize, String contentType, Long parentId) {
 
-        /*
-        计算文件SHA-256哈希值 -> 查询有无相同哈希值文件记录 ->
-        (秒传)保存文件记录 -> 更新上传进度
-        (异步上传)获取文件字节数组输入流 -> OSS上传，回调更新上传进度 -> 保存文件记录 -> 更新上传进度
-         */
-
         progressTracker.update(taskId, 10, "uploading", "文件读取完成");
 
         String fileHash = computeSha256(fileBytes);
         progressTracker.update(taskId, 20, "uploading", "SHA-256计算完成");
 
-        File existingFile = fileMapper.selectByFileHash(fileHash);
-        if (existingFile != null) {
-            saveFileRecord(originalFilename, existingFile.getStoredFilename(),
-                    fileSize, contentType, fileHash, userId, existingFile.getOssUrl(), parentId);
-            progressTracker.update(taskId, 100, "done", "秒传成功");
-            log.info("文件秒传成功(复用已有文件): {} -> {}", originalFilename, existingFile.getOssUrl());
-            return;
-        }
+        // 分布式锁防止并发上传相同文件时重复写入 OSS
+        String lockKey = "upload:hash:" + fileHash;
+        RLock lock = redissonClient.getLock(lockKey);
+        try {
+            if (lock.tryLock(10, 120, TimeUnit.SECONDS)) {
+                File existingFile = fileMapper.selectByFileHash(fileHash);
+                if (existingFile != null) {
+                    saveFileRecord(originalFilename, existingFile.getStoredFilename(),
+                            fileSize, contentType, fileHash, userId, existingFile.getOssUrl(), parentId);
+                    progressTracker.update(taskId, 100, "done", "秒传成功");
+                    log.info("文件秒传成功(复用已有文件): {} -> {}", originalFilename, existingFile.getOssUrl());
+                    return;
+                }
 
-        progressTracker.update(taskId, 25, "uploading", "去重检查完成，开始上传OSS");
+                progressTracker.update(taskId, 25, "uploading", "去重检查完成，开始上传OSS");
 
-        try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
-            String storedFilename = ossUtil.upload(inputStream, originalFilename, contentType,
-                    bytesWritten -> {
-                        int ossPercent = 30 + (int) (bytesWritten * 60 / fileSize);
-                        progressTracker.update(taskId, Math.min(ossPercent, 90), "uploading", "OSS上传中");
-                    });
+                try (InputStream inputStream = new ByteArrayInputStream(fileBytes)) {
+                    String storedFilename = ossUtil.upload(inputStream, originalFilename, contentType,
+                            bytesWritten -> {
+                                int ossPercent = 30 + (int) (bytesWritten * 60 / fileSize);
+                                progressTracker.update(taskId, Math.min(ossPercent, 90), "uploading", "OSS上传中");
+                            });
 
-            progressTracker.update(taskId, 90, "uploading", "OSS上传完成");
+                    progressTracker.update(taskId, 90, "uploading", "OSS上传完成");
 
-            String ossUrl = ossUtil.getOssUrl(storedFilename);
-            saveFileRecord(originalFilename, storedFilename, fileSize,
-                    contentType, fileHash, userId, ossUrl, parentId);
+                    String ossUrl = ossUtil.getOssUrl(storedFilename);
+                    saveFileRecord(originalFilename, storedFilename, fileSize,
+                            contentType, fileHash, userId, ossUrl, parentId);
 
-            progressTracker.update(taskId, 100, "done", "上传成功");
-            log.info("文件上传成功: {} -> {}", originalFilename, ossUrl);
-        } catch (IOException e) {
-            progressTracker.update(taskId, 0, "failed", "OSS上传失败: " + e.getMessage());
-            log.error("文件上传失败: {}", originalFilename, e);
+                    progressTracker.update(taskId, 100, "done", "上传成功");
+                    log.info("文件上传成功: {} -> {}", originalFilename, ossUrl);
+                } catch (IOException e) {
+                    progressTracker.update(taskId, 0, "failed", "OSS上传失败: " + e.getMessage());
+                    log.error("文件上传失败: {}", originalFilename, e);
+                }
+            } else {
+                progressTracker.update(taskId, 0, "failed", "获取上传锁超时，请稍后重试");
+                log.warn("获取秒传锁超时: fileHash={}", fileHash);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            progressTracker.update(taskId, 0, "failed", "上传被中断");
+            log.warn("秒传锁被中断: fileHash={}", fileHash);
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
     }
 

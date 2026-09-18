@@ -14,6 +14,8 @@ import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
 import com.xiyuetsuki.moonclouddrivedemo.util.ProgressTracker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,7 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 分片上传服务实现
@@ -46,6 +49,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final OssUtil ossUtil;
     private final FileMapper fileMapper;
     private final ProgressTracker progressTracker;
+    private final RedissonClient redissonClient;
 
     @Value("${moon.chunk.upload.chunk-size:" + DEFAULT_CHUNK_SIZE + "}")
     private long chunkSize;
@@ -73,32 +77,41 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             }
         }
 
-        // 秒传检查：相同哈希的文件已存在则直接复用OSS文件创建新记录
-        File existingFile = fileMapper.selectByFileHash(fileHash);
-        if (existingFile != null) {
-            log.info("文件秒传(分片): {} -> {}", fileName, existingFile.getOssUrl());
+        // 秒传检查：对相同文件哈希加分布式锁，防止并发时重复创建记录
+        String lockKey = "upload:hash:" + fileHash;
+        RLock lock = redissonClient.getLock(lockKey);
+        try {
+            if (lock.tryLock(10, 30, TimeUnit.SECONDS)) {
+                File existingFile = fileMapper.selectByFileHash(fileHash);
+                if (existingFile != null) {
+                    log.info("文件秒传(分片): {} -> {}", fileName, existingFile.getOssUrl());
 
-            /*
-             * 秒传逻辑：
-             * 文件内容已存在于OSS中，无需重复上传
-             * 但需为当前用户在数据库中创建独立的文件记录
-             * 新记录指向同一OSS文件，拥有独立的文件名、所属文件夹等属性
-             */
-            File newFile = new File();
-            newFile.setOriginalFilename(fileName);
-            newFile.setStoredFilename(existingFile.getStoredFilename());
-            newFile.setFileSize(existingFile.getFileSize());
-            newFile.setContentType(existingFile.getContentType());
-            newFile.setFileHash(fileHash);
-            newFile.setUserId(userId);
-            newFile.setOssUrl(existingFile.getOssUrl());
-            newFile.setUploadTime(LocalDateTime.now());
-            newFile.setParentId(parentId);
-            newFile.setIsFolder(0);
-            fileMapper.insert(newFile);
+                    File newFile = new File();
+                    newFile.setOriginalFilename(fileName);
+                    newFile.setStoredFilename(existingFile.getStoredFilename());
+                    newFile.setFileSize(existingFile.getFileSize());
+                    newFile.setContentType(existingFile.getContentType());
+                    newFile.setFileHash(fileHash);
+                    newFile.setUserId(userId);
+                    newFile.setOssUrl(existingFile.getOssUrl());
+                    newFile.setUploadTime(LocalDateTime.now());
+                    newFile.setParentId(parentId);
+                    newFile.setIsFolder(0);
+                    fileMapper.insert(newFile);
 
-            FileVO fileVO = buildFileVO(newFile);
-            return ChunkInitResponse.instant(fileVO);
+                    FileVO fileVO = buildFileVO(newFile);
+                    return ChunkInitResponse.instant(fileVO);
+                }
+            } else {
+                log.warn("获取秒传锁超时: fileHash={}", fileHash);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("秒传锁被中断: fileHash={}", fileHash);
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
 
         // 计算分片数量并初始化OSS多段上传
