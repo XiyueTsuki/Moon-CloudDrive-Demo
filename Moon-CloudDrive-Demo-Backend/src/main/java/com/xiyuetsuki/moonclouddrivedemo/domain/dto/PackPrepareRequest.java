@@ -1,5 +1,7 @@
 package com.xiyuetsuki.moonclouddrivedemo.domain.dto;
 
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
@@ -12,5 +14,7 @@ import java.util.List;
 public class PackPrepareRequest {
 
     /** 要打包的文件 ID 列表，不允许为空，单次最多 50 个 */
+    @NotEmpty(message = "请至少选择一个文件")
+    @Size(max = 50, message = "单次最多打包50个文件")
     private List<Long> fileIds;
 }

@@ -1,5 +1,6 @@
 package com.xiyuetsuki.moonclouddrivedemo.domain.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 /**
@@ -10,6 +11,7 @@ import lombok.Data;
 public class ChunkCompleteRequest {
 
     /** 上传任务唯一标识 */
+    @NotBlank(message = "uploadId不能为空")
     private String uploadId;
 
     /** 文件MIME类型，如 application/octet-stream */

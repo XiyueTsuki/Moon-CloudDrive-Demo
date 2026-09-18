@@ -11,6 +11,7 @@ import com.xiyuetsuki.moonclouddrivedemo.service.ShareService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -33,10 +34,7 @@ public class ShareController {
 
     @Operation(summary = "创建分享链接", description = "为指定文件创建一个分享链接，可设置有效期与提取码")
     @PostMapping("/api/share/create")
-    public Response<Share> createShare(@RequestBody CreateShareRequest request) {
-        if (request.getFileId() == null) {
-            return Response.bad(400, "文件ID不能为空");
-        }
+    public Response<Share> createShare(@Valid @RequestBody CreateShareRequest request) {
         Share share = shareService.createShare(request);
         return Response.ok(share, "分享链接创建成功");
     }
@@ -69,19 +67,11 @@ public class ShareController {
     @PostMapping("/share/{shareCode}/verify")
     public Response<Void> verifyPassword(
             @Parameter(description = "分享码") @PathVariable String shareCode,
-            @RequestBody VerifyCodeRequest request) {
-        if (request.getPassword() == null || request.getPassword().isEmpty()) {
-            return Response.bad(400, "提取码不能为空");
-        }
+            @Valid @RequestBody VerifyCodeRequest request) {
         shareService.verifyPassword(shareCode, request.getPassword());
         return Response.ok("验证成功");
     }
 
-    /**
-     * 获取分享文件下载链接
-     * 仅在用户实际点击下载时递增下载次数
-     * 若分享有提取码，需传入已校验的密码
-     */
     @Operation(summary = "获取分享文件下载链接", description = "获取分享文件的OSS预签名下载URL，有提取码时需传入已验证的密码")
     @GetMapping("/share/{shareCode}/download")
     public Response<String> getDownloadUrl(

@@ -1,5 +1,8 @@
 package com.xiyuetsuki.moonclouddrivedemo.domain.dto;
 
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
@@ -10,12 +13,16 @@ import lombok.Data;
 public class ChunkInitRequest {
 
     /** 原始文件名 */
+    @NotBlank(message = "文件名不能为空")
     private String fileName;
 
     /** 文件总大小（字节） */
+    @NotNull(message = "文件大小不能为空")
+    @Min(value = 1, message = "文件大小无效")
     private Long fileSize;
 
     /** 文件SHA-256哈希值，用于秒传去重 */
+    @NotBlank(message = "文件哈希不能为空")
     private String fileHash;
 
     /** 上传到的目标文件夹ID，null表示根目录 */

@@ -28,6 +28,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -89,16 +90,7 @@ public class FileController {
     @Operation(summary = "初始化分片上传", description = "开始大文件分片上传，返回uploadId和分片信息，若文件哈希已存在则秒传")
     @RateLimit(dimension = RateLimitDimension.USER, maxRequests = 10, windowSeconds = 60, message = "操作过于频繁，请稍后再试")
     @PostMapping("/chunk/init")
-    public Response<ChunkInitResponse> initChunkUpload(@RequestBody ChunkInitRequest request) {
-        if (request.getFileName() == null || request.getFileName().isBlank()) {
-            return Response.bad(400, "文件名不能为空");
-        }
-        if (request.getFileSize() == null || request.getFileSize() <= 0) {
-            return Response.bad(400, "文件大小无效");
-        }
-        if (request.getFileHash() == null || request.getFileHash().isBlank()) {
-            return Response.bad(400, "文件哈希不能为空");
-        }
+    public Response<ChunkInitResponse> initChunkUpload(@Valid @RequestBody ChunkInitRequest request) {
         ChunkInitResponse resp = chunkUploadService.initChunkUpload(
                 request.getFileName(), request.getFileSize(),
                 request.getFileHash(), request.getParentId(), request.getContentType());
@@ -122,10 +114,7 @@ public class FileController {
 
     @Operation(summary = "完成分片上传", description = "所有分片上传完毕后调用此接口合并文件")
     @PostMapping("/chunk/complete")
-    public Response<FileVO> completeChunkUpload(@RequestBody ChunkCompleteRequest request) {
-        if (request.getUploadId() == null || request.getUploadId().isBlank()) {
-            return Response.bad(400, "uploadId不能为空");
-        }
+    public Response<FileVO> completeChunkUpload(@Valid @RequestBody ChunkCompleteRequest request) {
         FileVO fileVO = chunkUploadService.completeChunkUpload(
                 request.getUploadId(), request.getContentType());
         return Response.ok(fileVO, "文件上传完成");
@@ -350,10 +339,7 @@ public class FileController {
     @Operation(summary = "提交打包下载任务", description = "提交多文件打包下载，返回taskId供前端轮询进度")
     @RateLimit(dimension = RateLimitDimension.USER, maxRequests = 3, windowSeconds = 60, message = "打包下载过于频繁，请1分钟后再试")
     @PostMapping("/pack/prepare")
-    public Response<String> preparePackDownload(@RequestBody PackPrepareRequest request) {
-        if (request.getFileIds() == null || request.getFileIds().isEmpty()) {
-            return Response.bad(400, "请至少选择一个文件");
-        }
+    public Response<String> preparePackDownload(@Valid @RequestBody PackPrepareRequest request) {
         String taskId = packDownloadService.preparePack(request.getFileIds());
         return Response.ok(taskId, "打包任务已提交");
     }
@@ -452,9 +438,6 @@ public class FileController {
     @GetMapping("/preview/info")
     public Response<PreviewInfoResponse> getPreviewInfo(
             @Parameter(description = "文件ID") @RequestParam Long fileId) {
-        if (fileId == null) {
-            return Response.bad(400, "文件ID不能为空");
-        }
         PreviewInfoResponse info = previewService.getPreviewInfo(fileId);
         return Response.ok(info, "查询成功");
     }
@@ -470,9 +453,6 @@ public class FileController {
     @GetMapping("/preview/text")
     public Response<TextPreviewResponse> getTextContent(
             @Parameter(description = "文件ID") @RequestParam Long fileId) {
-        if (fileId == null) {
-            return Response.bad(400, "文件ID不能为空");
-        }
         TextPreviewResponse text = previewService.getTextContent(fileId);
         return Response.ok(text, "查询成功");
     }
@@ -507,9 +487,6 @@ public class FileController {
     @GetMapping("/preview/pdf")
     public Response<PdfPreviewResponse> getPdfPreview(
             @Parameter(description = "文件ID") @RequestParam Long fileId) {
-        if (fileId == null) {
-            return Response.bad(400, "文件ID不能为空");
-        }
         PdfPreviewResponse preview = pdfConvertService.getPdfPreview(fileId);
         return Response.ok(preview, "查询成功");
     }
@@ -529,13 +506,6 @@ public class FileController {
             @Parameter(description = "文件ID") @RequestParam Long fileId,
             @Parameter(description = "页码，从1开始") @PathVariable int pageNum,
             HttpServletResponse response) throws IOException {
-
-        if (fileId == null) {
-            response.setStatus(400);
-            response.setContentType("application/json;charset=UTF-8");
-            response.getWriter().write("{\"code\":400,\"msg\":\"文件ID不能为空\"}");
-            return;
-        }
 
         byte[] imageBytes = pdfConvertService.getPageImage(fileId, pageNum);
         response.setContentType("image/" + pdfPreviewConfig.getImageFormat());

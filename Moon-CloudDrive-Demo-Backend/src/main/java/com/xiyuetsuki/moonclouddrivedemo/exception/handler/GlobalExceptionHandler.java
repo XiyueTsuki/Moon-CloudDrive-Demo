@@ -7,8 +7,11 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
 import com.xiyuetsuki.moonclouddrivedemo.exception.BusinessException;
 import com.xiyuetsuki.moonclouddrivedemo.exception.RateLimitException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.stream.Collectors;
 
 /**
  * 全局异常处理器
@@ -55,6 +58,19 @@ public class GlobalExceptionHandler {
     public Response<Void> handleNotPermissionException(RuntimeException e) {
         log.warn("无权限访问: {}", e.getMessage());
         return Response.bad(403, "无权限访问");
+    }
+
+    /**
+     * 参数校验异常 — Bean Validation（@Valid）校验失败时抛出
+     * 提取所有字段的错误信息拼接返回
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public Response<Void> handleValidationException(MethodArgumentNotValidException e) {
+        String msg = e.getBindingResult().getFieldErrors().stream()
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                .collect(Collectors.joining("; "));
+        log.warn("参数校验失败: {}", msg);
+        return Response.bad(400, msg);
     }
 
     /**
