@@ -1,4 +1,9 @@
+app:
+  host: ${APP_HOST:192.168.100.128}
+
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   application:
     name: Moon-CloudDrive-Demo
   servlet:
@@ -6,15 +11,15 @@ spring:
       max-file-size: 100MB
       max-request-size: 100MB
   datasource:
-    url: jdbc:mysql://192.168.100.128:4000/Moon-CloudDrive-Demo?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
-    username: root
-    password: 123
+    url: jdbc:mysql://${app.host}:4000/Moon-CloudDrive-Demo?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123}
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
-      host: 192.168.100.128
+      host: ${app.host}
       port: 4001
-      password:
+      password: ${REDIS_PASSWORD:}
       database: 0
       timeout: 3000ms
       lettuce:
@@ -25,8 +30,8 @@ spring:
   mail:
     host: smtp.qq.com
     port: 465
-    username: ${MAIL.USERNAME}
-    password: ${MAIL.PASSWORD}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
     protocol: smtps
     properties:
       mail:
@@ -40,7 +45,7 @@ spring:
 
 mybatis-plus:
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: ${MYBATIS_LOG_IMPL:org.apache.ibatis.logging.stdout.StdOutImpl}
     map-underscore-to-camel-case: true
   global-config:
     db-config:
@@ -83,12 +88,12 @@ moon:
       chunk-size: 5242880
   pack:
     max-file-count: 50
-    max-total-size: 536870912
+    max-total-size: 536870912 #512MB
     zip-expire-minutes: 30
 
 # ========== RocketMQ 配置 ==========
 rocketmq:
-  namesrv-addr: 192.168.100.128:9876
+  namesrv-addr: ${app.host}:9876
   producer:
     group: pack-download-producer-group
     send-msg-timeout: 3000
