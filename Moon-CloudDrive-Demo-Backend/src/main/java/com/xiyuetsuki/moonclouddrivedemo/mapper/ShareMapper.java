@@ -37,6 +37,6 @@ public interface ShareMapper extends BaseMapper<Share> {
     @Update("UPDATE tb_share SET download_count = download_count + 1, "
             + "status = CASE WHEN max_downloads > 0 AND download_count + 1 >= max_downloads THEN 0 ELSE status END "
             + "WHERE id = #{id} AND status = 1 "
-            + "AND (max_downloads = 0 OR download_count < max_downloads)")
+            + "AND (max_downloads <= 0 OR download_count < max_downloads)")
     int incrementDownloadCountAndCheckLimit(@Param("id") Long id);
 }
