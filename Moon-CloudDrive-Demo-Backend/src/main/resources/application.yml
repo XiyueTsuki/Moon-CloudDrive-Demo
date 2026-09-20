@@ -123,3 +123,30 @@ knife4j:
     enable-swagger-models: true
     enable-document-manage: true
     enable-version: true
+
+# ========== Actuator 健康检查监控配置 ==========
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+    build:
+      enabled: true
+    git:
+      enabled: true
+
+info:
+  app:
+    name: '@project.name@'
+    version: '@project.version@'
+    description: '@project.description@'
+    java-version: '@java.version@'

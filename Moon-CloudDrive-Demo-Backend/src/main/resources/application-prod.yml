@@ -1,0 +1,11 @@
+# ========== Actuator 健康检查监控配置（生产环境） ==========
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+  server:
+    port: 8081

@@ -1,0 +1,9 @@
+# ========== Actuator 健康检查监控配置（开发环境） ==========
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
