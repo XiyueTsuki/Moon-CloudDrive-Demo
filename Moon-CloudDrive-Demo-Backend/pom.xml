@@ -90,6 +90,12 @@
 			<groupId>com.aliyun.oss</groupId>
 			<artifactId>aliyun-sdk-oss</artifactId>
 			<version>3.18.3</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.ini4j</groupId>
+					<artifactId>ini4j</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 
 		<dependency>
@@ -140,6 +146,28 @@
 			<groupId>org.apache.rocketmq</groupId>
 			<artifactId>rocketmq-client</artifactId>
 			<version>5.3.0</version>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-beanutils</groupId>
+					<artifactId>commons-beanutils</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.lz4</groupId>
+					<artifactId>lz4-java</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>commons-beanutils</groupId>
+			<artifactId>commons-beanutils</artifactId>
+			<version>1.11.0</version>
+		</dependency>
+
+		<dependency>
+			<groupId>at.yawk.lz4</groupId>
+			<artifactId>lz4-java</artifactId>
+			<version>1.11.1</version>
 		</dependency>
 
 		<dependency>
