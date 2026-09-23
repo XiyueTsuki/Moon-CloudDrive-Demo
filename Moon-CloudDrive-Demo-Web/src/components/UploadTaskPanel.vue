@@ -10,7 +10,6 @@
  * - 页面刷新后自动恢复未完成任务
  */
 import { ref, computed, watch, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
 import { useUploadStore } from '@/stores/upload'
 import { RefreshFileListEvent } from '@/events/fileEvents'
 import type { UploadTask, UploadTaskStatus } from '@/types/api'

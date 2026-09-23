@@ -86,8 +86,6 @@ const packMessage = ref('')
 const packZipFilename = ref('')
 /** 轮询定时器ID */
 let packPollTimer: ReturnType<typeof setInterval> | null = null
-/** 用于在打包对话框内中止请求的控制器 */
-let packAbortController: AbortController | null = null
 
 // ==================== 文件预览相关状态 ====================
 const previewDialogVisible = ref(false)
@@ -187,12 +185,6 @@ function handlePageChange(page: number) {
 function handleSearch() {
   currentPage.value = 1
   loadFileList()
-}
-
-/** 按名称排序切换 */
-function sortOrderLabel(field: string): string {
-  if (sortBy.value !== field) return ''
-  return sortOrder.value === 'asc' ? ' ↑' : ' ↓'
 }
 
 async function loadBreadcrumbs() {

@@ -1,0 +1,129 @@
+version: '3.3'
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: mysql-8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: Moon-CloudDrive-Demo
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mysql/data:/var/lib/mysql
+      - ./data/mysql/conf:/etc/mysql/conf.d
+      - ./data/mysql/init:/docker-entrypoint-initdb.d
+    networks:
+      - moon-cloud
+
+  redis:
+    image: redis:8.2
+    container_name: redis-8.2
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis/data:/data
+      - ./data/redis/conf:/usr/local/etc/redis
+    networks:
+      - moon-cloud
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.0
+    container_name: rocketmq-namesrv-5.3.0
+    restart: unless-stopped
+    user: root
+    ports:
+      - "9876:9876"
+    environment:
+      JAVA_OPT_EXT: "-server -Xms256m -Xmx256m -Xmn128m"
+    command: sh mqnamesrv
+    volumes:
+      - ./data/rocketmq/namesrv/logs:/home/rocketmq/logs
+    networks:
+      - moon-cloud
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.0
+    container_name: rocketmq-broker-5.3.0
+    restart: unless-stopped
+    user: root
+    ports:
+      - "10911:10911"
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.3.0/conf/broker.conf
+    volumes:
+      - ./data/rocketmq/broker/logs:/home/rocketmq/logs
+      - ./data/rocketmq/broker/store:/home/rocketmq/store
+      - ./data/rocketmq/broker/broker.conf:/home/rocketmq/rocketmq-5.3.0/conf/broker.conf
+    depends_on:
+      - rocketmq-namesrv
+    networks:
+      - moon-cloud
+
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:2.1.0
+    container_name: rocketmq-dashboard
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Dcom.rocketmq.sendMessageWithVIPChannel=false"
+    depends_on:
+      - rocketmq-namesrv
+    networks:
+      - moon-cloud
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: moon-clouddrive-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      MYSQL_USERNAME: ${MYSQL_USERNAME}
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET}
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - ./data/backend/logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_started
+      redis:
+        condition: service_started
+      rocketmq-namesrv:
+        condition: service_started
+      rocketmq-broker:
+        condition: service_started
+    networks:
+      - moon-cloud
+
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: moon-clouddrive-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - moon-cloud
+
+networks:
+  moon-cloud:
+    driver: bridge
