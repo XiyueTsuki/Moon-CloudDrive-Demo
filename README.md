@@ -15,19 +15,20 @@ Moon-CloudDrive-Demo 是一个前后端分离的云盘文件分享系统，支�
 | PDF 处理 | Apache PDFBox（服务端 PDF 转图片） |
 | 邮件服务 | Spring Boot Mail（验证码） |
 | API 文档 | Knife4j |
-| 前端框架 | Vue 3.5 + TypeScript 6.0 |
+| 前端框架 | Vue 3.5 + TypeScript |
 | 构建工具 | Vite 8.2 |
 | UI 组件库 | Element Plus 2.14 |
 | 状态管理 | Pinia 4.0 |
 | 路由 | Vue Router 5.2 |
 | HTTP 客户端 | Axios 1.20 |
-| 代码高亮 | highlight.js 11.12（文本预览） |
 
 ## 项目结构
 
 ```
 Moon-CloudDrive-Demo/
 ├── Moon-CloudDrive-Demo-Backend/     # Spring Boot 后端
+│   ├── Dockerfile                    # 开发环境镜像（Maven 多阶段构建，源码编译）
+│   ├── Dockerfile.prod               # 生产环境镜像（直接拷贝 jar 运行）
 │   └── src/main/java/com/xiyuetsuki/moonclouddrivedemo/
 │       ├── annotation/               # 自定义注解（限流）
 │       ├── aspect/                   # AOP 切面
@@ -55,8 +56,24 @@ Moon-CloudDrive-Demo/
 │       ├── types/                    # TypeScript 类型定义
 │       ├── utils/                    # 工具函数（分片上传）
 │       └── views/                    # 页面组件（Home、Login、Register、RecycleBin、ShareManage、ShareAccess）
-├── sql/                              # 数据库建表脚本
-└── docker-compose.yml                # Docker 基础服务编排
+├── data/                             # 生产环境数据与配置（容器挂载）
+│   ├── backend/logs/                 # 后端应用日志
+│   ├── mysql/{data,conf,init}/       # MySQL 数据/配置/建表脚本
+│   ├── redis/{data,conf}/            # Redis 持久化/配置
+│   └── rocketmq/                     # RocketMQ 数据/日志/配置
+│       ├── namesrv/logs/
+│       └── broker/{logs,store,broker.conf}
+├── monitoring/                       # 监控组件配置与数据
+│   ├── prometheus/
+│   │   ├── prometheus.yml            # Prometheus 采集配置
+│   │   └── data/                     # 时序数据库存储
+│   └── grafana/
+│       ├── provisioning/datasources/ # Grafana 自动数据源
+│       └── data/                     # Grafana 仪表盘/用户数据
+├── nginx.conf                        # 前端 Nginx 配置（反向代理 + 动态 DNS 解析）
+├── docker-compose.dev.yml            # 开发环境基础设施编排（仅中间件）
+├── docker-compose.prod.yml           # 生产环境全栈编排（所有服务 + 监控）
+└── .env.prod                         # 生产环境环境变量模板
 ```
 
 ---
@@ -153,7 +170,7 @@ Moon-CloudDrive-Demo/
 
 ---
 
-## 快速开始
+## 快速开始（开发环境）
 
 ### 环境要求
 
@@ -172,35 +189,16 @@ cd Moon-CloudDrive-Demo
 ### 2. 启动基础设施
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.dev.yml up -d
 ```
 
 启动后将创建：
-- MySQL 8.4 → `localhost:4000`（root/123）
+- MySQL 8.4 → `localhost:4000`
 - Redis 8.2 → `localhost:4001`
-- RocketMQ → `localhost:9876`（NameServer，Broker 自动注册）
+- RocketMQ NameServer → `localhost:9876`
+- RocketMQ Dashboard → `localhost:8082`
 
-### 3. 初始化数据库
-
-> 全新部署：依次执行 `sql/` 目录下的建表脚本。
-
-```bash
-source sql/tb_user.sql;
-source sql/tb_file.sql;
-source sql/tb_share.sql;
-```
-
-### 4. 配置后端
-
-编辑 `Moon-CloudDrive-Demo-Backend/src/main/resources/application.yml`，按实际情况配置：
-
-- 数据库连接地址、用户名、密码
-- Redis 连接地址
-- RocketMQ NameServer 地址
-- 阿里云 OSS（AccessKey、Bucket、Endpoint）
-- 邮箱 SMTP（用于发送验证码）
-
-### 5. 启动后端
+### 3. 启动后端
 
 ```bash
 cd Moon-CloudDrive-Demo-Backend
@@ -209,7 +207,7 @@ mvn spring-boot:run
 
 后端默认运行在 `http://localhost:8080`，Knife4j API 文档：`http://localhost:8080/doc.html`。
 
-### 6. 启动前端
+### 4. 启动前端
 
 ```bash
 cd Moon-CloudDrive-Demo-Web
@@ -219,9 +217,183 @@ npm run dev
 
 前端开发服务器运行在 `http://localhost:5173`。
 
-### 7. 访问
+### 5. 访问
 
 浏览器打开 `http://localhost:5173`，注册账号后即可使用。
+
+---
+
+## 生产环境部署
+
+### 部署目录结构
+
+生产机部署根目录为 `/XiyueTsuki-Moon-CloudDrive-Demo-prod`，结构如下：
+
+```
+/XiyueTsuki-Moon-CloudDrive-Demo-prod/
+├── docker-compose.prod.yml    # 生产环境编排文件
+├── .env.prod                  # 环境变量（密钥、密码等）
+├── backend/
+│   ├── Dockerfile.prod        # 后端生产镜像（从源项目复制）
+│   └── app.jar                # mvn package 编译产物
+├── frontend/
+│   ├── dist/                  # npm run build 产物
+│   └── nginx.conf             # 前端 Nginx 配置（从源项目复制）
+├── data/                      # MySQL、Redis、RocketMQ 持久化数据
+│   ├── backend/logs/          # 后端应用日志
+│   ├── mysql/
+│   │   ├── data/              # 数据库文件
+│   │   ├── conf/              # MySQL 自定义配置
+│   │   └── init/              # 建表脚本（首次启动自动执行）
+│   ├── redis/
+│   │   ├── data/              # RDB/AOF 持久化
+│   │   └── conf/              # redis.conf
+│   └── rocketmq/
+│       ├── namesrv/logs/
+│       └── broker/
+│           ├── logs/
+│           ├── store/
+│           └── broker.conf
+└── monitoring/                # 监控组件数据
+    ├── prometheus/
+    │   ├── prometheus.yml     # 采集配置
+    │   └── data/              # 时序数据
+    └── grafana/
+        ├── provisioning/datasources/
+        │   └── datasource.yml # 自动连接 Prometheus
+        └── data/              # 仪表盘/用户
+```
+
+### 环境变量配置
+
+编辑 `.env.prod`，填入真实值：
+
+```env
+# ========== MySQL 配置 ==========
+MYSQL_ROOT_PASSWORD=your_mysql_root_password
+MYSQL_USERNAME=root
+
+# ========== 邮件配置（QQ 邮箱） ==========
+MAIL_USERNAME=your_email@qq.com
+MAIL_PASSWORD=your_smtp_authorization_code
+
+# ========== 阿里云 OSS 配置 ==========
+OSS_ACCESS_KEY_ID=your_aliyun_access_key_id
+OSS_ACCESS_KEY_SECRET=your_aliyun_access_key_secret
+
+# ========== Grafana 管理员密码（可选，默认 admin） ==========
+GRAFANA_PASSWORD=your_grafana_password
+```
+
+### 部署步骤
+
+```bash
+# 1. 构建前端
+cd Moon-CloudDrive-Demo-Web
+npm install
+npm run build
+
+# 2. 构建后端
+cd Moon-CloudDrive-Demo-Backend
+mvn clean package -DskipTests
+
+# 3. 将以下文件上传到生产机 /XiyueTsuki-Moon-CloudDrive-Demo-prod/
+#    - backend/Dockerfile.prod → backend/
+#    - backend/target/*.jar → backend/app.jar
+#    - frontend/dist/ → frontend/dist/
+#    - frontend/nginx.conf → frontend/nginx.conf（源项目根目录）
+#    - docker-compose.prod.yml
+#    - .env.prod
+#    - data/ 目录结构
+#    - monitoring/ 目录结构
+
+# 4. 在生产机上创建必要目录
+mkdir -p data/mysql/{data,conf,init}
+mkdir -p data/redis/{data,conf}
+mkdir -p data/rocketmq/{namesrv/logs,broker/{logs,store}}
+mkdir -p data/backend/logs
+mkdir -p monitoring/prometheus/data
+mkdir -p monitoring/grafana/data
+
+# 5. 启动所有服务
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+# 6. 查看运行状态
+docker compose -f docker-compose.prod.yml ps
+```
+
+### 各服务端口一览
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| 前端 Nginx | `80` | 用户访问入口 |
+| 后端 API | `8080` | 业务接口 |
+| 后端 Actuator | `8081` | 健康检查与 Prometheus 指标 |
+| MySQL | `3306` | 数据库 |
+| Redis | `6379` | 缓存 |
+| RocketMQ NameServer | `9876` | 消息队列命名服务 |
+| RocketMQ Broker | `10911` | 消息队列代理 |
+| RocketMQ Dashboard | `8082` | 消息队列控制台 |
+| Dozzle | `9999` | 容器实时日志查看 |
+| Prometheus | `9090` | 指标采集与存储 |
+| Grafana | `3000` | 指标可视化仪表盘 |
+
+---
+
+## 监控体系
+
+### 架构
+
+```
+┌──────────┐  ┌──────────┐  ┌───────────────┐
+│ Backend  │  │  Node    │  │  Docker 容器    │
+│ :8081    │  │ Exporter │  │ (Dozzle 日志)   │
+│ JVM/业务  │  │ :9100    │  │               │
+└────┬─────┘  └────┬─────┘  └───────┬───────┘
+     │              │               │
+     ▼              ▼               ▼
+┌────────────────────────────────────────┐
+│          Prometheus :9090              │
+│      指标采集 + 存储（保留 15 天）       │
+└──────────────────┬─────────────────────┘
+                   ▼
+┌────────────────────────────────────────┐
+│          Grafana :3000                 │
+│      仪表盘可视化                        │
+└────────────────────────────────────────┘
+```
+
+### 访问地址
+
+| 工具 | 地址 | 默认账号 |
+|------|------|---------|
+| 应用 | `http://<服务器IP>` | — |
+| Dozzle 日志 | `http://<服务器IP>:9999` | 无需登录 |
+| Prometheus | `http://<服务器IP>:9090` | 无需登录 |
+| Grafana | `http://<服务器IP>:3000` | `admin` / `admin`（可通过 `.env.prod` 中 `GRAFANA_PASSWORD` 修改） |
+
+### Grafana 仪表盘导入
+
+Prometheus 数据源已通过 `monitoring/grafana/provisioning/datasources/datasource.yml` 自动配置，导入社区仪表盘模板即可：
+
+```
+左侧菜单 → Dashboards → New → Import → 输入模板 ID → Load
+在 prometheus 下拉框中选择 Prometheus → Import
+```
+
+| 模板 ID | 名称 | 监控内容 |
+|---------|------|---------|
+| `4701` | JVM (Micrometer) | JVM 堆内存、GC 次数/耗时、线程、类加载 |
+| `1860` | Node Exporter Full | 宿主机 CPU、内存、磁盘 IO、网络流量 |
+| `12856` | JVM Micrometer Detailed | JVM 详细指标（堆/非堆、GC 次数与耗时） |
+
+> 模板 `4701` 使用 `${DS_PROMETHEUS}` 变量占位数据源，导入后在 JSON Model 中搜索 `${DS_PROMETHEUS}` 全部替换为 `Prometheus` 保存即可。
+
+### 使用场景
+
+- **Grafana**：日常查看系统健康状态（CPU、内存、JVM GC、HTTP 请求量/延迟）
+- **Dozzle**：排查问题时实时查看各容器日志，支持搜索和过滤
+- **Prometheus**：一般不需要直接访问，默默在后台采集指标即可
 
 ---
 
@@ -282,6 +454,8 @@ npm run dev
 - **定时清理**：`@Scheduled` 每天凌晨 2 点清理过期回收站文件
 - **分享安全**：8 位 Base62 随机码，支持提取码、有效期、下载次数限制
 - **API 限流**：`@RateLimit` 注解 + AOP，IP 级别限流
+- **生产部署**：Docker Compose 全栈编排，MySQL 自动建库建表，Nginx 反向代理 + Docker DNS 动态解析
+- **健康监控**：Spring Boot Actuator 暴露 `/actuator/health` 和 `/actuator/prometheus`，Grafana 可视化 JVM 与系统指标
 
 ## License
 
