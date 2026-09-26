@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useUserStore } from '@/stores/user'
-import { changePassword } from '@/api/user'
+import { useUserStore } from '@/features/auth/stores/auth'
+import { changePassword } from '@/features/auth/api/auth'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()

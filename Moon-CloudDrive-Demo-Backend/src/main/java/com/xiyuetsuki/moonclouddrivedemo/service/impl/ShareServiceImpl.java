@@ -114,6 +114,12 @@ public class ShareServiceImpl implements ShareService {
         }
 
         File file = fileMapper.selectById(share.getFileId());
+
+        // 文件夹不支持直接下载（文件夹没有实际 OSS 对象）
+        if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+            throw new BusinessException("文件夹不支持直接下载，请前往文件列表打包下载");
+        }
+
         String downloadUrl = ossUtil.generatePresignedUrl(file.getStoredFilename(), file.getOriginalFilename());
 
         // 原子递增下载次数 + 判断是否达到最大下载限制
