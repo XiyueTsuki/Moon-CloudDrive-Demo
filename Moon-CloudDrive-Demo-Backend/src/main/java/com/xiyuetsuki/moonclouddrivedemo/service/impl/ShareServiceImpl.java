@@ -2,12 +2,14 @@ package com.xiyuetsuki.moonclouddrivedemo.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.CreateShareRequest;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ShareInfoResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.File;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.Share;
 import com.xiyuetsuki.moonclouddrivedemo.exception.BusinessException;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.FileMapper;
 import com.xiyuetsuki.moonclouddrivedemo.mapper.ShareMapper;
+import com.xiyuetsuki.moonclouddrivedemo.service.PackDownloadService;
 import com.xiyuetsuki.moonclouddrivedemo.service.ShareExpireManager;
 import com.xiyuetsuki.moonclouddrivedemo.service.ShareService;
 import com.xiyuetsuki.moonclouddrivedemo.util.OssUtil;
@@ -18,7 +20,9 @@ import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -34,6 +38,7 @@ public class ShareServiceImpl implements ShareService {
     private final OssUtil ossUtil;
     private final PasswordEncoder passwordEncoder;
     private final ShareExpireManager shareExpireManager;
+    private final PackDownloadService packDownloadService;
 
     @Override
     public Share createShare(CreateShareRequest request) {
@@ -78,8 +83,9 @@ public class ShareServiceImpl implements ShareService {
 
         // 仅返回文件元数据，不返回下载链接，不递增下载次数
         // 下载链接需通过 getDownloadUrl 接口单独获取
+        boolean isFolder = file.getIsFolder() != null && file.getIsFolder() == 1;
         return new ShareInfoResponse(shareCode, file.getOriginalFilename(), file.getFileSize(),
-                share.getPassword() != null, null);
+                share.getPassword() != null, isFolder, null);
     }
 
     @Override
@@ -115,9 +121,9 @@ public class ShareServiceImpl implements ShareService {
 
         File file = fileMapper.selectById(share.getFileId());
 
-        // 文件夹不支持直接下载（文件夹没有实际 OSS 对象）
+        // 文件夹不支持直接下载，应使用打包下载接口
         if (file.getIsFolder() != null && file.getIsFolder() == 1) {
-            throw new BusinessException("文件夹不支持直接下载，请前往文件列表打包下载");
+            throw new BusinessException("文件夹不支持直接下载，请使用打包下载");
         }
 
         String downloadUrl = ossUtil.generatePresignedUrl(file.getStoredFilename(), file.getOriginalFilename());
@@ -162,6 +168,79 @@ public class ShareServiceImpl implements ShareService {
         share.setStatus(0);
         shareMapper.updateById(share);
         log.info("分享链接已取消: code={}", shareCode);
+    }
+
+    @Override
+    public String prepareSharePackDownload(String shareCode, String password) {
+        // 1. 校验分享链接及提取码
+        Share share = validateShare(shareCode);
+
+        if (share.getPassword() != null) {
+            if (password == null || password.isEmpty()) {
+                throw new BusinessException("此链接需要提取码");
+            }
+            if (!passwordEncoder.matches(password, share.getPassword())) {
+                throw new BusinessException("提取码错误");
+            }
+        }
+
+        // 2. 确认分享对象是文件夹
+        File folder = fileMapper.selectById(share.getFileId());
+        if (folder.getIsFolder() == null || folder.getIsFolder() != 1) {
+            throw new BusinessException("此分享不是文件夹，请使用下载链接");
+        }
+
+        // 3. 递归收集文件夹下所有子孙文件（排除子文件夹，只取实际文件）
+        List<File> descendants = fileMapper.selectAllDescendants(folder.getId());
+        List<Long> fileIds = new ArrayList<>();
+        for (File f : descendants) {
+            // 跳过子文件夹本身（文件夹没有 storedFilename，无法从 OSS 下载）
+            if (f.getIsFolder() != null && f.getIsFolder() == 1) {
+                continue;
+            }
+            // 跳过存储信息异常的文件
+            if (f.getStoredFilename() == null || f.getStoredFilename().isEmpty()) {
+                log.warn("分享打包时跳过存储信息异常的文件: fileId={}, name={}", f.getId(), f.getOriginalFilename());
+                continue;
+            }
+            fileIds.add(f.getId());
+        }
+
+        if (fileIds.isEmpty()) {
+            throw new BusinessException("该文件夹下没有可下载的文件");
+        }
+
+        // 4. 提交异步打包任务（使用文件夹拥有者的 userId）
+        String taskId = packDownloadService.submitPackTask(folder.getUserId(), fileIds);
+
+        // 5. 原子递增下载次数（整个文件夹打包下载只计一次）
+        int rows = shareMapper.incrementDownloadCountAndCheckLimit(share.getId());
+        if (rows <= 0) {
+            throw new BusinessException("分享链接已失效");
+        }
+
+        log.info("分享文件夹打包任务已提交: code={}, taskId={}, fileCount={}",
+                shareCode, taskId, fileIds.size());
+        return taskId;
+    }
+
+    @Override
+    public PackProgressResponse getSharePackProgress(String shareCode, String taskId) {
+        // 仅校验分享是否存在（不检查过期/下载次数，因为 prepareSharePackDownload 已完成权限校验）
+        // 下载次数已达上限时分享会被标记失效，但打包任务仍需继续执行和下载
+        if (shareMapper.selectByShareCode(shareCode) == null) {
+            throw new BusinessException("分享链接不存在");
+        }
+        return packDownloadService.getPackProgress(taskId);
+    }
+
+    @Override
+    public String getSharePackFilePath(String shareCode, String taskId) {
+        // 同上，仅校验分享是否存在，不检查下载次数和过期
+        if (shareMapper.selectByShareCode(shareCode) == null) {
+            throw new BusinessException("分享链接不存在");
+        }
+        return packDownloadService.getPackFilePath(taskId);
     }
 
     /**

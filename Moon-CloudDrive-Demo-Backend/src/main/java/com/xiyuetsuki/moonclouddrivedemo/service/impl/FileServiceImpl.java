@@ -180,6 +180,10 @@ public class FileServiceImpl implements FileService {
         if (file == null) {
             throw new BusinessException("文件不存在或无权操作");
         }
+        // 文件夹不支持直接下载，没有实际的 OSS 对象
+        if (file.getIsFolder() != null && file.getIsFolder() == 1) {
+            throw new BusinessException("文件夹不支持直接下载，请勾选后使用批量打包下载");
+        }
         // 生成OSS预签名URL，有效期1小时，支持浏览器直接下载
         String presignedUrl = ossUtil.generatePresignedUrl(
                 file.getStoredFilename(), file.getOriginalFilename());

@@ -24,9 +24,9 @@ export function useBatchOps(fileList: () => FileInfo[], onSuccess: () => void) {
   const batchRenameMode = ref('sequence')
   const batchRenameValue = ref('')
 
-  /** 当前页可被多选的文件（排除文件夹） */
+  /** 当前页所有可批量操作的文件和文件夹 */
   function getSelectableFiles(): FileInfo[] {
-    return fileList().filter((f) => f.isFolder !== 1)
+    return fileList()
   }
 
   /** 同步全选/半选状态 */

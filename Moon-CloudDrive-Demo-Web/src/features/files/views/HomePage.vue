@@ -32,6 +32,7 @@
 
         <!-- 文件表格：支持排序、多选、文件夹双击进入、文件单击预览 -->
         <FileTable
+          ref="fileTableRef"
           :file-list="fileList"
           :loading="fileListLoading"
           @sort-change="handleSortChange"
@@ -146,7 +147,7 @@
 
 <script setup lang="ts">
 import { Upload } from '@element-plus/icons-vue'
-import { ref } from 'vue'
+import { ref, useTemplateRef } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useFileList } from '@/features/files/composables/useFileList'
 import { useFileActions } from '@/features/files/composables/useFileActions'
@@ -246,13 +247,21 @@ const {
 } = useFilePreview()
 
 // ── 打包下载 ──
+const fileTableRef = useTemplateRef('fileTableRef')
+
+/** 打包下载完成后的回调：同时清除前端选中状态和表格复选框 */
+function onPackDownloadDone() {
+  clearSelection()
+  fileTableRef.value?.clearTableSelection()
+}
+
 const {
   packDialogVisible,
   packStatus,
   packPercent,
   packMessage,
   handleBatchDownload,
-} = usePackDownload(() => selectedFileIds.value, () => clearSelection())
+} = usePackDownload(() => selectedFileIds.value, onPackDownloadDone)
 
 // ── 分享链接 ──
 const shareDialogVisible = ref(false)
@@ -291,14 +300,11 @@ async function handleShare(payload: { days: number; password: string; maxDownloa
   }
 }
 
-/** 处理表格的选择变化事件 */
+/** 处理表格的选择变化事件（文件和文件夹均可选中） */
 function onTableSelectionChange(selection: any[]) {
-  // 清空后根据 selection 重建
   const newSet = new Set<number>()
   selection.forEach((row) => {
-    if (row.isFolder !== 1) {
-      newSet.add(row.id)
-    }
+    newSet.add(row.id)
   })
   selectedFileIds.value = newSet
 }

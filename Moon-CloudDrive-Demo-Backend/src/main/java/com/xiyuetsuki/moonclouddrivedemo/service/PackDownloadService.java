@@ -8,13 +8,23 @@ import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackProgressResponse;
 public interface PackDownloadService {
 
     /**
-     * 提交打包下载任务
+     * 提交打包下载任务（需登录认证）
      * 校验文件归属后发送 RocketMQ 消息，返回 taskId 供前端轮询
      *
      * @param fileIds 要打包的文件ID列表
      * @return 任务标识
      */
     String preparePack(java.util.List<Long> fileIds);
+
+    /**
+     * 提交打包任务（不校验用户权限，由调用方进行权限控制）
+     * 用于分享文件夹下载等无需登录认证的场景
+     *
+     * @param userId  文件拥有者用户ID
+     * @param fileIds 要打包的文件ID列表
+     * @return 任务标识
+     */
+    String submitPackTask(Long userId, java.util.List<Long> fileIds);
 
     /**
      * 查询打包任务的实时进度

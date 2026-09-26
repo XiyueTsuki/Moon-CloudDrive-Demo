@@ -4,6 +4,7 @@ import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimit;
 import com.xiyuetsuki.moonclouddrivedemo.annotation.RateLimitDimension;
 import com.xiyuetsuki.moonclouddrivedemo.domain.common.Response;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.CreateShareRequest;
+import com.xiyuetsuki.moonclouddrivedemo.domain.dto.PackProgressResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.ShareInfoResponse;
 import com.xiyuetsuki.moonclouddrivedemo.domain.dto.VerifyCodeRequest;
 import com.xiyuetsuki.moonclouddrivedemo.domain.entity.Share;
@@ -79,5 +80,114 @@ public class ShareController {
             @Parameter(description = "提取码（若分享设置了提取码则必传）") @RequestParam(required = false) String password) {
         String downloadUrl = shareService.getDownloadUrl(shareCode, password);
         return Response.ok(downloadUrl, "获取下载链接成功");
+    }
+
+    // ==================== 分享文件夹打包下载 ====================
+
+    /**
+     * 提交分享文件夹的打包下载任务
+     * 校验分享后递归收集文件夹下所有文件，提交异步打包任务，返回 taskId 供前端轮询
+     *
+     * @param shareCode 分享码
+     * @param password  提取码（可选）
+     * @return 包含 taskId 的响应
+     */
+    @Operation(summary = "提交分享文件夹打包下载", description = "提交分享文件夹的打包下载任务，返回taskId供前端轮询进度")
+    @RateLimit(dimension = RateLimitDimension.IP, maxRequests = 3, windowSeconds = 60,
+            message = "打包下载过于频繁，请1分钟后再试")
+    @PostMapping("/share/{shareCode}/prepare-pack")
+    public Response<String> prepareSharePackDownload(
+            @Parameter(description = "分享码") @PathVariable String shareCode,
+            @Parameter(description = "提取码") @RequestParam(required = false) String password) {
+        String taskId = shareService.prepareSharePackDownload(shareCode, password);
+        return Response.ok(taskId, "打包任务已提交");
+    }
+
+    /**
+     * 查询分享文件夹打包进度
+     * 前端轮询此接口获取打包的实时进度
+     *
+     * @param shareCode 分享码
+     * @param taskId    打包任务ID
+     * @return 包含状态、百分比、消息的进度信息
+     */
+    @Operation(summary = "查询分享打包进度", description = "前端轮询此接口获取分享文件夹打包的实时进度")
+    @GetMapping("/share/{shareCode}/pack-progress")
+    public Response<PackProgressResponse> getSharePackProgress(
+            @Parameter(description = "分享码") @PathVariable String shareCode,
+            @Parameter(description = "打包任务ID") @RequestParam String taskId) {
+        PackProgressResponse progress = shareService.getSharePackProgress(shareCode, taskId);
+        if (progress == null) {
+            return Response.bad(404, "任务不存在或已过期");
+        }
+        return Response.ok(progress, "查询成功");
+    }
+
+    /**
+     * 下载分享文件夹打包完成的 ZIP 文件
+     * 以流式方式返回 ZIP 文件，浏览器自动触发下载
+     *
+     * @param shareCode 分享码
+     * @param taskId    打包任务ID
+     */
+    @Operation(summary = "下载分享打包ZIP", description = "下载分享文件夹打包完成的ZIP文件")
+    @GetMapping("/share/{shareCode}/pack-download")
+    public void downloadSharePackZip(
+            @Parameter(description = "分享码") @PathVariable String shareCode,
+            @Parameter(description = "打包任务ID") @RequestParam String taskId,
+            jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+
+        PackProgressResponse progress = shareService.getSharePackProgress(shareCode, taskId);
+        if (progress == null) {
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":404,\"msg\":\"任务不存在或已过期\"}");
+            return;
+        }
+        if (!"ready".equals(progress.getStatus())) {
+            response.setStatus(400);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":400,\"msg\":\"打包尚未完成，当前状态: "
+                    + progress.getStatus() + "\"}");
+            return;
+        }
+
+        String zipPath = shareService.getSharePackFilePath(shareCode, taskId);
+        if (zipPath == null) {
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":404,\"msg\":\"ZIP文件不存在或已过期\"}");
+            return;
+        }
+
+        java.io.File zipFile = new java.io.File(zipPath);
+        if (!zipFile.exists()) {
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":404,\"msg\":\"ZIP文件不存在或已过期\"}");
+            return;
+        }
+
+        String filename = progress.getZipFilename() != null
+                ? progress.getZipFilename() : "pack_download.zip";
+        String encodedFilename = java.net.URLEncoder.encode(filename,
+                java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+
+        response.setContentType("application/zip");
+        response.setHeader("Content-Disposition", "attachment;filename=" + encodedFilename);
+        response.setContentLengthLong(zipFile.length());
+
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(zipFile);
+             java.io.OutputStream os = response.getOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = fis.read(buffer)) != -1) {
+                os.write(buffer, 0, len);
+            }
+            os.flush();
+        }
+
+        log.info("分享文件夹ZIP下载完成: shareCode={}, taskId={}, size={}",
+                shareCode, taskId, zipFile.length());
     }
 }

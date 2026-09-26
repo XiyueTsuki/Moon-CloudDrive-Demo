@@ -17,6 +17,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -43,27 +45,69 @@ public class PackDownloadServiceImpl implements PackDownloadService {
         if (fileIds == null || fileIds.isEmpty()) {
             throw new BusinessException("请至少选择一个文件");
         }
-        if (fileIds.size() > maxFileCount) {
-            throw new BusinessException("单次最多打包 " + maxFileCount + " 个文件");
-        }
 
+        // 展开文件夹：对于选中的文件夹，递归收集其下所有子孙文件
+        // 使用 LinkedHashSet 去重，同一文件可能被选入多个文件夹或多次选中
+        LinkedHashSet<Long> expandedFileIds = new LinkedHashSet<>();
         long totalSize = 0;
+
         for (Long fileId : fileIds) {
             File file = fileMapper.selectByUserIdAndId(userId, fileId);
             if (file == null) {
                 throw new BusinessException("文件不存在或无权操作: fileId=" + fileId);
             }
+
             if (file.getIsFolder() != null && file.getIsFolder() == 1) {
-                throw new BusinessException("暂不支持打包文件夹，请选择文件: " + file.getOriginalFilename());
+                // 文件夹：递归收集所有子孙文件
+                List<File> descendants = fileMapper.selectAllDescendants(file.getId());
+                for (File f : descendants) {
+                    // 跳过子文件夹本身（文件夹没有 storedFilename，无法从 OSS 下载）
+                    if (f.getIsFolder() != null && f.getIsFolder() == 1) {
+                        continue;
+                    }
+                    if (f.getStoredFilename() == null || f.getStoredFilename().isEmpty()) {
+                        log.warn("打包时跳过存储信息异常的文件: fileId={}, name={}",
+                                f.getId(), f.getOriginalFilename());
+                        continue;
+                    }
+                    if (expandedFileIds.add(f.getId())) {
+                        totalSize += f.getFileSize() != null ? f.getFileSize() : 0;
+                    }
+                }
+            } else {
+                // 普通文件：直接加入
+                if (file.getStoredFilename() == null || file.getStoredFilename().isEmpty()) {
+                    throw new BusinessException("文件存储信息异常: " + file.getOriginalFilename());
+                }
+                if (expandedFileIds.add(file.getId())) {
+                    totalSize += file.getFileSize() != null ? file.getFileSize() : 0;
+                }
             }
-            if (file.getStoredFilename() == null || file.getStoredFilename().isEmpty()) {
-                throw new BusinessException("文件存储信息异常: " + file.getOriginalFilename());
-            }
-            totalSize += file.getFileSize() != null ? file.getFileSize() : 0;
         }
 
+        if (expandedFileIds.isEmpty()) {
+            throw new BusinessException("选中的文件/文件夹中没有可下载的文件");
+        }
+        if (expandedFileIds.size() > maxFileCount) {
+            throw new BusinessException("展开后文件数 " + expandedFileIds.size()
+                    + " 超过单次打包上限 " + maxFileCount);
+        }
         if (totalSize > maxTotalSize) {
-            throw new BusinessException("打包文件总大小超过 " + (maxTotalSize / 1024 / 1024) + "MB 限制");
+            throw new BusinessException("打包文件总大小超过 "
+                    + (maxTotalSize / 1024 / 1024) + "MB 限制");
+        }
+
+        List<Long> expandedFileIdList = new ArrayList<>(expandedFileIds);
+        log.info("打包任务展开: 用户选中 {} 个节点 → 展开为 {} 个实际文件, 总大小 {} bytes",
+                fileIds.size(), expandedFileIdList.size(), totalSize);
+
+        return submitPackTask(userId, expandedFileIdList);
+    }
+
+    @Override
+    public String submitPackTask(Long userId, List<Long> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            throw new BusinessException("没有可下载的文件");
         }
 
         String taskId = UUID.randomUUID().toString().replace("-", "");
@@ -81,8 +125,8 @@ public class PackDownloadServiceImpl implements PackDownloadService {
             throw new BusinessException("提交打包任务失败，请稍后重试");
         }
 
-        log.info("打包任务已提交: taskId={}, fileCount={}, totalSize={}",
-                taskId, fileIds.size(), totalSize);
+        log.info("打包任务已提交: taskId={}, userId={}, fileCount={}",
+                taskId, userId, fileIds.size());
         return taskId;
     }
 

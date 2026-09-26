@@ -13,9 +13,8 @@
     style="width: 100%"
     row-key="id"
   >
-    <!-- 复选框列：仅文件可勾选，文件夹不可勾选 -->
+    <!-- 复选框列：文件和文件夹均可勾选 -->
     <el-table-column
-      :selectable="(row: FileInfo) => row.isFolder !== 1"
       type="selection"
       width="48"
       :reserve-selection="true"
@@ -49,7 +48,7 @@
     <!-- 操作列 -->
     <el-table-column label="操作" width="340" align="center" fixed="right">
       <template #default="{ row }">
-        <el-button text type="primary" size="small" @click="$emit('download', row)">下载</el-button>
+        <el-button v-if="row.isFolder !== 1" text type="primary" size="small" @click="$emit('download', row)">下载</el-button>
         <el-button text type="primary" size="small" @click="$emit('share', row)">分享</el-button>
         <el-button text type="primary" size="small" @click="$emit('rename', row)">重命名</el-button>
         <el-button text type="primary" size="small" @click="$emit('move', row)">移动</el-button>
@@ -60,6 +59,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { Folder, Document } from '@element-plus/icons-vue'
 import type { FileInfo } from '../types/files'
 
@@ -79,6 +79,15 @@ defineEmits<{
   (e: 'move', row: FileInfo): void
   (e: 'delete', row: FileInfo): void
 }>()
+
+const tableRef = ref()
+
+/** 清空表格复选框选中状态（供父组件调用，同步清除 ElTable 内部状态） */
+function clearTableSelection() {
+  tableRef.value?.clearSelection()
+}
+
+defineExpose({ clearTableSelection })
 
 /** 格式化文件大小为人类可读的文本 */
 function formatFileSize(bytes: number): string {

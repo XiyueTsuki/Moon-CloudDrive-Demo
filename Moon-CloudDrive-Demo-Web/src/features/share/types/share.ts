@@ -31,9 +31,19 @@ export interface ShareInfoResponse {
   fileName: string
   fileSize: number
   needPassword: boolean
+  isFolder: boolean
+  downloadUrl: string | null
 }
 
 /** 验证提取码请求参数 */
 export interface VerifyCodeRequest {
   password: string
+}
+
+/** 打包任务进度信息 */
+export interface PackProgressResponse {
+  status: string
+  percent: number
+  message: string
+  zipFilename: string | null
 }
