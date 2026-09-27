@@ -183,23 +183,25 @@ export const useUploadStore = defineStore('upload', () => {
 
       // 轮询进度
       await new Promise<void>((resolve, reject) => {
-        const timer = setInterval(async () => {
+        const poll = async () => {
           try {
             const progressRes = await getProgress(serverTaskId)
             const p = progressRes.data.data
             updateTask(taskId, { progress: p.percent, message: p.message })
+
             if (p.status === 'done') {
-              clearInterval(timer)
               resolve()
             } else if (p.status === 'failed') {
-              clearInterval(timer)
               reject(new Error(p.message || '上传失败'))
+            } else {
+              setTimeout(poll, 1000)   // 等这次请求完成再排下一次
             }
           } catch {
-            clearInterval(timer)
             reject(new Error('查询进度失败'))
           }
-        }, 1000)
+        }
+
+        poll()
       })
 
       updateTask(taskId, {
